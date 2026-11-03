@@ -1,0 +1,7 @@
+.env
+node_modules/
+data/
+*.sqlite*
+.build-cargo/
+desktop/core/target/
+desktop/src-tauri/target/

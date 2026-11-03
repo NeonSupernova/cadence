@@ -1,0 +1,16 @@
+{
+  "name": "jev-task-tracker",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli.ts",
+    "demo": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli.ts /demo",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "desktop": "npm --prefix desktop run tdev",
+    "desktop:build": "npm --prefix desktop run tbuild -- --bundles app",
+    "desktop:launch": "npm --prefix desktop run launch"
+  },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" }
+}
