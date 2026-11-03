@@ -22,6 +22,15 @@ pub(crate) fn curl_command() -> std::process::Command {
     }
     #[cfg(not(windows))]
     {
-        std::process::Command::new("/usr/bin/curl")
+        std::process::Command::new("curl")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(not(windows))]
+    fn curl_command_uses_path_on_unix() {
+        assert_eq!(super::curl_command().get_program(), "curl");
     }
 }
