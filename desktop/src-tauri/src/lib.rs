@@ -9,6 +9,8 @@ use tauri::{Emitter, Manager, State};
 mod canvas_integration;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(desktop)]
+mod updater;
 mod workload_integration;
 
 #[tauri::command]
@@ -329,6 +331,12 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             macos::setup(app.handle())?;
             canvas_integration::start_background(app.handle());
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                updater::start_background(app.handle());
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {

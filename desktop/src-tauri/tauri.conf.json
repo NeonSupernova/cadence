@@ -44,6 +44,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCRDVBMjJCMDlGQzM5Q0YKUldUUE9md0pLNkxWRzUwUU00UmZzd1lyTGpEWHluQ0ZKSGZweURCblBSQnd1YTh1aDdmRUZPTlQK",
+      "endpoints": [
+        "https://github.com/NeonSupernova/cadence/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

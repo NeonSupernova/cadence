@@ -1,12 +1,7 @@
 //! Read-only Canvas integration. Credentials never enter task/model context.
 use chrono::{Local, Utc};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{collections::HashSet, io::Write, path::Path, process::Stdio};
 use url::Url;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -439,32 +434,28 @@ impl CanvasClient {
             quote(url.as_str()),
             quote(&format!("Authorization: Bearer {}", self.config.token))
         );
-        let mut child = Command::new(if cfg!(windows) {
-            "curl.exe"
-        } else {
-            "/usr/bin/curl"
-        })
-        .args([
-            "--config",
-            "-",
-            "--globoff",
-            "--silent",
-            "--show-error",
-            "--include",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "60",
-            "--max-filesize",
-            "8388608",
-            "--write-out",
-            "\n%{http_code}",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| "Could not start the Canvas HTTPS client.")?;
+        let mut child = crate::curl_command()
+            .args([
+                "--config",
+                "-",
+                "--globoff",
+                "--silent",
+                "--show-error",
+                "--include",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "60",
+                "--max-filesize",
+                "8388608",
+                "--write-out",
+                "\n%{http_code}",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| "Could not start the Canvas HTTPS client.")?;
         child
             .stdin
             .take()

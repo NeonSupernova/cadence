@@ -5,7 +5,7 @@ use std::{
     collections::BTreeMap,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -160,12 +160,7 @@ impl Router {
         let quote = |s: &str| serde_json::to_string(s).unwrap();
         let cfg = format!("url = {}\nrequest = \"POST\"\nheader = {}\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: Cadence\"\ndata-binary = {}\n",
             quote(&format!("https://openrouter.ai/api/{path}")), quote(&format!("Authorization: Bearer {}", self.config.api_key)), quote(&body.to_string()));
-        let exe = if cfg!(target_os = "windows") {
-            "curl.exe"
-        } else {
-            "/usr/bin/curl"
-        };
-        let mut child = Command::new(exe)
+        let mut child = crate::curl_command()
             .args([
                 "--config",
                 "-",

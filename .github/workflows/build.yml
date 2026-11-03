@@ -1,7 +1,8 @@
 name: Build desktop app
 
 # Every push to main builds installers and attaches them to the workflow run.
-# Pushing a tag like v0.1.0 also publishes them to a draft GitHub Release.
+# Pushing a tag like v0.2.0 publishes them, plus the signed latest.json the
+# in-app updater reads, to a GitHub Release. The tag sets the app version.
 on:
   push:
     branches: [main]
@@ -52,18 +53,38 @@ jobs:
         working-directory: desktop
         run: bun install --frozen-lockfile
 
+      # The tag sets the version. Updater artifacts must be signed, so builds
+      # without the key (e.g. fork PRs) skip them but still produce installers.
+      - name: Prepare Tauri config
+        shell: bash
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          node -e '
+            const fs = require("fs"), p = "desktop/src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            if (process.env.TAG) c.version = process.env.TAG.replace(/^v/, "");
+            if (process.env.HAS_KEY !== "true") c.bundle.createUpdaterArtifacts = false;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+          '
+
       - name: Build app
         id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tauriScript: bun run tauri
           args: ${{ matrix.args }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: Cadence ${{ github.ref_name }}
-          releaseDraft: true
+          # Published, not draft: the updater only sees the latest published release.
+          releaseDraft: false
+          includeUpdaterJson: true
 
       - name: Upload installers
         uses: actions/upload-artifact@v5
