@@ -223,6 +223,7 @@ fn unreliable_long_timers_can_train_effort_without_polluting_time_predictions() 
         started_at: (now() - Duration::hours(8)).to_rfc3339(),
         ended_at: now().to_rfc3339(),
         duration_ms: 8 * 60 * 60 * 1000,
+        manual: false,
     }];
     let o = feedback_outcome(
         &t,

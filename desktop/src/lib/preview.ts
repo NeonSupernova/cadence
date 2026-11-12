@@ -11,7 +11,11 @@ export function preview(): Snapshot {
     { id: 4, title: 'Explore vector databases', description: 'Compare options for the next project.', type: 'research', labels: ['coding', 'work'], priority: 43, status: 'open', dueDate: null },
     { id: 5, title: 'Book a dentist appointment', description: 'Schedule a routine checkup.', type: 'personal', labels: ['health'], priority: 30, status: 'open', dueDate: null },
     { id: 6, title: 'Send the weekly update', description: 'Share this week’s progress with the team.', type: 'chore', labels: ['work', 'writing'], priority: 50, status: 'done', dueDate: null },
-  ].map(t => ({ ...t, raw: t.description, confidence: 0.96, createdAt: now, updatedAt: now, deleted: false, trackedMs: t.id === 1 ? 2520000 : t.id === 6 ? 900000 : 0, timerStartedAt: null, timeEntries: [] })) as Task[];
+  ].map(t => {
+    const trackedMs = t.id === 1 ? 2520000 : t.id === 6 ? 900000 : 0;
+    return { ...t, raw: t.description, confidence: 0.96, createdAt: now, updatedAt: now, deleted: false, trackedMs, timerStartedAt: null,
+      timeEntries: trackedMs ? [{ startedAt: now, endedAt: now, durationMs: trackedMs, manual: true }] : [] };
+  }) as Task[];
   const assessments = Object.fromEntries(tasks.map(t => { const minutes = t.id===1 ? 90 : t.id===2 ? 75 : 30; return [t.id, { estimate: {minutes,technical:t.type==='bug'?4:2,tedium:3,ambiguity:3,switching:2,source:'starter'},predictedMinutes:minutes,remainingMinutes:minutes,units:minutes/25,totalUnits:minutes/25,lowMinutes:minutes/2,highMinutes:minutes*2,loadFactor:1,deadlinePressure:t.dueDate?1:0,fitScore:80,exceedsEstimate:false,reason:'Starter estimate. Review the task scope before relying on it.' }]; })) as Record<number,Assessment>;
   const days = Array.from({length:7}, (_,i) => {const date=new Date();date.setDate(date.getDate()+i); const weekday=(date.getDay()+6)%7;const minutes=weekday<5?120:60; return {date:date.toLocaleDateString('en-CA'),weekday,minutes,energy:3,capacityUnits:minutes/25,spentMinutes:0,spentUnits:0,remainingMinutes:minutes,remainingUnits:minutes/25,blocks:i===0?[{taskId:1,minutes:75,units:3,partial:true}]:[],learnedFactor:1};});
   const workload = {profile:{weekdayMinutes:[120,120,120,120,120,60,60],learningEnabled:true},calibration:{timeSamples:0,effortSamples:0,daySamples:0,timeCoefficients:[],loadWeights:[1,.2,.15,.12,.08],weekdayFactors:[1,1,1,1,1,1,1],uncertainty:.7,stage:'Starter estimates'},assessments,days,riskIds:[2],nextTaskId:1};

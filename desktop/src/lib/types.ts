@@ -5,7 +5,7 @@ export type Task = {
   priority: number; status: 'open' | 'in_progress' | 'done'; confidence: number;
   createdAt: string; updatedAt: string; dueDate: string | null; deleted: boolean;
   trackedMs: number; timerStartedAt: string | null;
-  timeEntries: { startedAt: string; endedAt: string; durationMs: number }[];
+  timeEntries: { startedAt: string; endedAt: string; durationMs: number; manual?: boolean }[];
   estimate?: Estimate | null;
   canvas?: { baseUrl: string; courseId: number; assignmentId: number; courseName: string; courseCode: string; title: string; url: string; dueAt: string | null; submitted: boolean; syncedAt: string } | null;
 };

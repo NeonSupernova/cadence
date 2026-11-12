@@ -432,7 +432,17 @@ impl Store {
         let mut touched = Vec::new();
         for action in &plan.actions {
             if ![
-                "create", "update", "complete", "reopen", "start", "pause", "delete", "restore",
+                "create",
+                "update",
+                "complete",
+                "reopen",
+                "start",
+                "pause",
+                "delete",
+                "restore",
+                "add_time",
+                "set_time",
+                "remove_time",
             ]
             .contains(&action.kind.as_str())
             {
@@ -492,6 +502,7 @@ impl Store {
                         "Restore TASK-{id:03} from Trash before changing it."
                     ));
                 }
+                let previous_tracked_ms = task.tracked_ms;
                 match action.kind.as_str() {
                     "complete" => {
                         task.stop_timer_at(Utc::now());
@@ -550,6 +561,70 @@ impl Store {
                         task.deleted = true;
                     }
                     "restore" => task.deleted = false,
+                    "add_time" => {
+                        if task.organization.role != "task" {
+                            return Err("Only tasks can record work time.".into());
+                        }
+                        let minutes = action
+                            .minutes
+                            .filter(|m| (1..=1440).contains(m))
+                            .ok_or("Enter 1–1440 minutes of work time.")?;
+                        let date = action.date.as_deref().ok_or("Choose a work date.")?;
+                        let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                            .map_err(|_| "Choose a valid work date.")?;
+                        if day > Local::now().date_naive() {
+                            return Err("Work time cannot be logged in the future.".into());
+                        }
+                        let at = day
+                            .and_hms_opt(12, 0, 0)
+                            .unwrap()
+                            .and_local_timezone(Local)
+                            .single()
+                            .ok_or("Choose a valid work date.")?
+                            .to_rfc3339();
+                        let duration_ms = u64::from(minutes) * 60_000;
+                        task.tracked_ms = task
+                            .tracked_ms
+                            .checked_add(duration_ms)
+                            .ok_or("Tracked time is too large.")?;
+                        task.time_entries.push(TimeEntry {
+                            started_at: at.clone(),
+                            ended_at: at,
+                            duration_ms,
+                            manual: true,
+                        });
+                    }
+                    "set_time" | "remove_time" => {
+                        let index = action.entry_index.ok_or("Choose a recorded session.")?;
+                        let previous = task
+                            .time_entries
+                            .get(index)
+                            .ok_or("That recorded session no longer exists.")?
+                            .duration_ms;
+                        task.tracked_ms = task.tracked_ms.saturating_sub(previous);
+                        if action.kind == "remove_time" {
+                            task.time_entries.remove(index);
+                        } else {
+                            let minutes = action
+                                .minutes
+                                .filter(|m| (1..=1440).contains(m))
+                                .ok_or("Enter 1–1440 minutes of work time.")?;
+                            let duration_ms = u64::from(minutes) * 60_000;
+                            task.tracked_ms = task
+                                .tracked_ms
+                                .checked_add(duration_ms)
+                                .ok_or("Tracked time is too large.")?;
+                            let entry = &mut task.time_entries[index];
+                            if !entry.manual {
+                                let end = chrono::DateTime::parse_from_rfc3339(&entry.ended_at)
+                                    .map_err(|_| "Recorded session has an invalid end time.")?;
+                                entry.started_at = (end
+                                    - chrono::Duration::minutes(i64::from(minutes)))
+                                .to_rfc3339();
+                            }
+                            entry.duration_ms = duration_ms;
+                        }
+                    }
                     "create" | "update" => {
                         if let Some(v) = &action.title {
                             task.title = v.trim().into();
@@ -613,37 +688,52 @@ impl Store {
                     params![serde_json::to_string(&task).map_err(err)?, task.id],
                 )
                 .map_err(err)?;
-                if learning_enabled && action.kind == "complete" && task.tracked_ms >= 300_000 {
+                if task.status == Status::Done
+                    && ["complete", "add_time", "set_time", "remove_time"]
+                        .contains(&action.kind.as_str())
+                {
                     let estimate = task
                         .baseline_estimate
                         .clone()
                         .unwrap_or_else(|| crate::workload::Estimate::for_task(&task));
                     let actual = task.tracked_ms as f64 / 60_000.0;
-                    let reliable = actual <= 960.0
+                    let reliable = (5.0..=960.0).contains(&actual)
                         && !task
                             .time_entries
                             .iter()
                             .any(|e| e.duration_ms > 4 * 60 * 60 * 1000);
-                    if reliable {
-                        let old: Option<String> = tx
-                            .query_row(
-                                "SELECT payload FROM workload_outcomes WHERE task_id = ?",
-                                [task.id],
-                                |r| r.get(0),
-                            )
-                            .optional()
-                            .map_err(err)?;
-                        let rating = old
-                            .and_then(|s| serde_json::from_str::<crate::workload::Outcome>(&s).ok())
-                            .and_then(|o| o.effort_rating);
+                    let old: Option<crate::workload::Outcome> = tx
+                        .query_row(
+                            "SELECT payload FROM workload_outcomes WHERE task_id = ?",
+                            [task.id],
+                            |r| r.get::<_, String>(0),
+                        )
+                        .optional()
+                        .map_err(err)?
+                        .map(|s| serde_json::from_str(&s).map_err(err))
+                        .transpose()?;
+                    if (learning_enabled && reliable) || old.is_some() {
+                        // Feedback may contain an explicit actual duration. Keep that value
+                        // when changing the recorded sessions later.
+                        let explicit = old.as_ref().is_some_and(|o| {
+                            (o.actual_minutes - previous_tracked_ms as f64 / 60_000.0).abs() > 0.001
+                        });
                         let outcome = crate::workload::Outcome {
                             task_id: task.id,
                             kind: task.kind.clone(),
                             estimate,
-                            actual_minutes: actual,
-                            effort_rating: rating,
+                            actual_minutes: if explicit {
+                                old.as_ref().unwrap().actual_minutes
+                            } else {
+                                actual
+                            },
+                            effort_rating: old.as_ref().and_then(|o| o.effort_rating),
                             recorded_at: now.clone(),
-                            time_reliable: true,
+                            time_reliable: if explicit {
+                                old.as_ref().unwrap().time_reliable
+                            } else {
+                                reliable
+                            },
                         };
                         tx.execute("INSERT INTO workload_outcomes(task_id,payload) VALUES (?,?) ON CONFLICT(task_id) DO UPDATE SET payload=excluded.payload",params![task.id,serde_json::to_string(&outcome).map_err(err)?]).map_err(err)?;
                     }
@@ -789,6 +879,9 @@ impl Store {
                 due_date,
                 organization: None,
                 estimate: None,
+                minutes: None,
+                date: None,
+                entry_index: None,
             };
             self.apply(
                 Plan {

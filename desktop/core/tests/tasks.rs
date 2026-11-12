@@ -36,6 +36,9 @@ fn create(title: &str) -> Action {
         due_date: None,
         estimate: None,
         organization: None,
+        minutes: None,
+        date: None,
+        entry_index: None,
     }
 }
 fn add(s: &mut Store, title: &str) -> i64 {

@@ -78,6 +78,8 @@ pub struct TimeEntry {
     pub started_at: String,
     pub ended_at: String,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub manual: bool,
 }
 impl Task {
     pub fn elapsed_ms_at(&self, now: chrono::DateTime<chrono::Utc>) -> u64 {
@@ -104,6 +106,7 @@ impl Task {
                     started_at,
                     ended_at: now.to_rfc3339(),
                     duration_ms,
+                    manual: false,
                 });
             }
         }
@@ -143,6 +146,15 @@ pub fn stats(tasks: &[Task]) -> Stats {
             s.running_task_id = Some(t.id);
         }
         for entry in &t.time_entries {
+            if entry.manual {
+                if chrono::DateTime::parse_from_rfc3339(&entry.ended_at)
+                    .ok()
+                    .is_some_and(|end| end.with_timezone(&Local).date_naive() == today)
+                {
+                    s.tracked_today_ms = s.tracked_today_ms.saturating_add(entry.duration_ms);
+                }
+                continue;
+            }
             if let (Ok(start), Ok(end)) = (
                 chrono::DateTime::parse_from_rfc3339(&entry.started_at),
                 chrono::DateTime::parse_from_rfc3339(&entry.ended_at),
@@ -355,6 +367,12 @@ pub struct Action {
     pub due_date: Option<String>,
     #[serde(default)]
     pub estimate: Option<crate::workload::Estimate>,
+    #[serde(default)]
+    pub minutes: Option<u32>,
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub entry_index: Option<usize>,
 }
 impl Action {
     pub fn status(kind: &str, id: i64) -> Self {
@@ -369,6 +387,9 @@ impl Action {
             due_date: None,
             organization: None,
             estimate: None,
+            minutes: None,
+            date: None,
+            entry_index: None,
         }
     }
 }

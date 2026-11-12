@@ -392,11 +392,22 @@ pub fn spent_on(
     };
     let mut minutes = 0.0;
     let mut units = 0.0;
-    for task in tasks {
+    for task in tasks.iter().filter(|task| !task.deleted) {
         let estimate = Estimate::for_task(task);
+        for entry in task.time_entries.iter().filter(|entry| entry.manual) {
+            if DateTime::parse_from_rfc3339(&entry.ended_at)
+                .ok()
+                .is_some_and(|at| at.with_timezone(&Local).date_naive() == date)
+            {
+                let duration = entry.duration_ms as f64 / 60_000.0;
+                minutes += duration;
+                units += duration / 25.0 * model.load(&estimate);
+            }
+        }
         let mut intervals: Vec<_> = task
             .time_entries
             .iter()
+            .filter(|entry| !entry.manual)
             .filter_map(|e| {
                 Some((
                     DateTime::parse_from_rfc3339(&e.started_at)

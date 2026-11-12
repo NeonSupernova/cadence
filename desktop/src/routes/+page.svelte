@@ -7,12 +7,22 @@
 
   let data = $state<Snapshot | null>(null);
   let clock = $state(Date.now());
-  let snapshotAt = $state(Date.now());
   let running = $derived(data?.tasks.find(t => !t.deleted && t.timerStartedAt));
   const elapsed = (task: Task) => (task.trackedMs || 0) + (task.timerStartedAt ? Math.max(0, clock - Date.parse(task.timerStartedAt)) : 0);
   const duration = (ms: number) => { const sec = Math.floor(ms / 1000); return `${Math.floor(sec / 3600)}:${String(Math.floor(sec / 60) % 60).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`; };
   let totalTracked = $derived(data?.tasks.filter(t => !t.deleted).reduce((sum, task) => sum + elapsed(task), 0) || 0);
-  let todayTracked = $derived((data?.stats.trackedTodayMs || 0) + (running ? Math.max(0, clock - snapshotAt) : 0));
+  let todayTracked = $derived.by(() => {
+    const start = new Date(clock).setHours(0, 0, 0, 0);
+    return (data?.tasks || []).filter(task => !task.deleted).reduce((total, task) => {
+      const logged = (task.timeEntries || []).reduce((sum, entry) => {
+        const end = Date.parse(entry.endedAt);
+        if (entry.manual) return sum + (new Date(end).toDateString() === new Date(clock).toDateString() ? entry.durationMs : 0);
+        return sum + Math.max(0, Math.min(end, clock) - Math.max(Date.parse(entry.startedAt), start));
+      }, 0);
+      const live = task.timerStartedAt ? Math.max(0, clock - Math.max(Date.parse(task.timerStartedAt), start)) : 0;
+      return total + logged + live;
+    }, 0);
+  });
   let view = $state<View>(defaultView());
   let selectedId = $state<number | null>(null);
   let input = $state('');
@@ -72,6 +82,10 @@
   let estimateDraft = $state<Estimate>({minutes:60,technical:3,tedium:3,ambiguity:3,switching:3,source:'user'});
   let estimateDirty = $state(false);
   let actualDraft = $state<number | undefined>();
+  let timeMinutes = $state<number | undefined>();
+  let timeDate = $state(new Date().toLocaleDateString('en-CA'));
+  let editingEntryIndex = $state<number | null>(null);
+  let editedMinutes = $state<number | undefined>();
   let formTaskId = $state<number | null>(null);
   let capacityDraft = $state([120,120,120,120,120,60,60]);
   let learningDraft = $state(true);
@@ -153,7 +167,20 @@
   async function saveDay() {dayDirty=false;await workloadUpdate('save_day_checkin',{checkin:{date:today(),minutes:dayMinutes,energy:dayEnergy}});budgetOpen=false;}
   async function rateEffort(id:number,rating:number) {await workloadUpdate('rate_task_effort',{id,rating,actualMinutes:selectedId===id ? actualDraft ?? null : null});if(!error){feedbackTaskId=null;notice='Effort feedback recorded. Your next estimates will use it.';}}
   async function reviewDay(date:string,rating:string) {await workloadUpdate('review_capacity_day',{date,rating});if(!error)notice='Day review saved. Future capacity for this weekday will adapt gradually.';}
-  $effect(()=>{ if(selectedId!==formTaskId){formTaskId=selectedId;estimateDirty=false;actualDraft=undefined;} if(selectedId && !estimateDirty){const current=data?.workload?.assessments[selectedId];if(current)estimateDraft={...current.estimate};} });
+  $effect(()=>{ if(selectedId!==formTaskId){formTaskId=selectedId;estimateDirty=false;actualDraft=undefined;timeMinutes=undefined;timeDate=today();editingEntryIndex=null;editedMinutes=undefined;} if(selectedId && !estimateDirty){const current=data?.workload?.assessments[selectedId];if(current)estimateDraft={...current.estimate};} });
+  async function changeTime(kind:'add_time'|'set_time'|'remove_time', id:number, entryIndex?:number) {
+    if (busy) return;
+    if (browserPreview) { error='Open the desktop app to change recorded time.'; return; }
+    const minutes = kind==='add_time' ? timeMinutes : kind==='set_time' ? editedMinutes : undefined;
+    if (kind!=='remove_time' && (!Number.isInteger(minutes) || (minutes ?? 0)<1 || (minutes ?? 0)>1440)) { error='Enter 1–1440 whole minutes.'; return; }
+    busy=true;error='';
+    try {
+      accept(await invoke<Snapshot>('change_tasks',{request:request(),actions:[{kind,taskIds:[id],title:null,description:null,labels:null,taskType:null,priority:null,dueDate:null,minutes:minutes ?? null,date:kind==='add_time'?timeDate:null,entryIndex:entryIndex ?? null}]}));
+      if(kind==='add_time') timeMinutes=undefined;
+      editingEntryIndex=null;editedMinutes=undefined;
+      notice=kind==='remove_time'?'Recorded time removed.':'Recorded time saved.';
+    } catch(e) {error=String(e);} finally {busy=false;}
+  }
   let journalDate = $state(new Date().toLocaleDateString('en-CA'));
   let searchField = $state<HTMLInputElement>();
   let nativeNote = $state('');
@@ -189,7 +216,7 @@
   const statusName = (s: string) => s === 'in_progress' ? 'In progress' : s === 'done' ? 'Done' : 'To do';
   const request = () => ({ view: { ...view }, selectedId, demo });
   function accept(snapshot: Snapshot) {
-    clock = Date.now(); snapshotAt = clock; data = snapshot; view = snapshot.view;
+    clock = Date.now(); data = snapshot; view = snapshot.view;
     if(snapshot.workload){if(!capacityDirty){capacityDraft=[...snapshot.workload.profile.weekdayMinutes];learningDraft=snapshot.workload.profile.learningEnabled;}if(!dayDirty){dayMinutes=snapshot.workload.days[0].minutes;dayEnergy=snapshot.workload.days[0].energy;}} if (snapshot.showList) screen = 'next';
     if (snapshot.focusIds.length) selectedId = snapshot.focusIds[0];
     if (selectedId && !snapshot.tasks.some(t => t.id === selectedId)) selectedId = null;
@@ -340,7 +367,7 @@
         <section class="capacity-settings"><header><h2>Your starting schedule</h2><p>Your starting availability, in focused minutes. Weekday load capacity adjusts gradually from your day reviews.</p></header><form onsubmit={event=>{event.preventDefault();saveCapacity();}}><div class="weekday-inputs">{#each weekdays as name,i}<label>{name.slice(0,3)}<input type="number" min="0" max="720" step="1" required bind:value={capacityDraft[i]} oninput={()=>capacityDirty=true}/><small>minutes</small></label>{/each}</div><label class="checkbox-label"><input type="checkbox" bind:checked={learningDraft} onchange={()=>capacityDirty=true}/> Learn from reliable completions and my feedback</label><button class="primary-button" disabled={busy||!capacityDirty}>Save schedule</button></form></section>
         <section class="learning-panel"><header><h2>Personal calibration</h2><span>{data?.workload.calibration.stage}</span></header><p>Time is learned from completed timers. Perceived load is learned from effort ratings. Weekday capacity changes only after day reviews. Missing work logs never lower your capacity.</p><div class="learning-counts"><strong>{data?.workload.calibration.timeSamples || 0}<small>timed tasks</small></strong><strong>{data?.workload.calibration.effortSamples || 0}<small>effort ratings</small></strong><strong>{data?.workload.calibration.daySamples || 0}<small>day reviews</small></strong></div><div class="weight-list">{#each factors as factor,i}<div><span>{factor.label}</span><div><span style={`width:${Math.min(100,(data?.workload.calibration.loadWeights[i+1] || 0)/.8*100)}%`}></span></div><strong>{(data?.workload.calibration.loadWeights[i+1] || 0).toFixed(2)}</strong></div>{/each}</div><p class="muted">Small samples stay close to starting weights. Older observations fade gradually. Pausing learning stops new outcomes and ratings from being collected.</p><div class="day-review"><h3>How sustainable was today?</h3><p>After at least 15 tracked minutes, tell the planner how the day felt.</p><div>{#each ['light','sustainable','overloaded'] as rating}<button class="secondary-button" disabled={busy||(day?.spentMinutes || 0)<15||!learningDraft} onclick={()=>reviewDay(today(),rating)}>{rating}</button>{/each}</div></div></section>
       {/if}
-      {#if screen==='journal'}<section class="focus-journal"><header><div><h2>Recorded focus</h2><p>Sessions ending on the selected day.</p></div><input type="date" aria-label="Journal date" bind:value={journalDate}/></header><div class="journal-summary"><strong>{duration(journalTotal)}</strong><span>{journal.length} completed sessions</span></div>{#each journal as entry}<button class="journal-entry" onclick={()=>inspect(entry.task.id)}><span class="journal-time">{clockTime(entry.startedAt)}<small>to {clockTime(entry.endedAt)}</small></span><span class="journal-task"><strong>{entry.task.title}</strong><small>{reference(entry.task.id)}</small></span><span class="journal-duration">{duration(entry.durationMs)}</span></button>{/each}{#if !journal.length}<div class="empty-state"><h3>No sessions recorded</h3><p>Start a task and pause or finish it to record a session here.</p></div>{/if}</section>{/if}
+      {#if screen==='journal'}<section class="focus-journal"><header><div><h2>Recorded focus</h2><p>Sessions ending on the selected day, plus manual time logged for that date.</p></div><input type="date" aria-label="Journal date" bind:value={journalDate}/></header><div class="journal-summary"><strong>{duration(journalTotal)}</strong><span>{journal.length} completed sessions</span></div>{#each journal as entry}<button class="journal-entry" onclick={()=>inspect(entry.task.id)}><span class="journal-time">{entry.manual?'Manual':clockTime(entry.startedAt)}<small>{entry.manual?'Added time':`to ${clockTime(entry.endedAt)}`}</small></span><span class="journal-task"><strong>{entry.task.title}</strong><small>{reference(entry.task.id)}</small></span><span class="journal-duration">{duration(entry.durationMs)}</span></button>{/each}{#if !journal.length}<div class="empty-state"><h3>No sessions recorded</h3><p>Start and pause a timer, or add time from a task's Effort & time tab.</p></div>{/if}</section>{/if}
     </div>
   </main>
   {#if selected && !chatOpen}{@const a=assessment(selected.id)}<div class="task-card-backdrop" role="presentation"><div class="inspector task-card" use:focusCard role="dialog" aria-modal="true" aria-label={selected.title} tabindex="-1" onkeydown={event=>{if(event.key==='Escape')selectedId=null;}}><header><span>{reference(selected.id)}</span><button onclick={()=>selectedId=null} aria-label="Close inspector">×</button></header><div class="inspector-content"><span class="section-kicker">{selected.organization?.role || 'task'} · {statusName(selected.status)}</span><h2>{selected.title}</h2>{#if error}<p class="card-error" role="alert">{error}</p>{/if}<nav class="card-tabs"><button class:active={cardSection==='overview'} onclick={()=>cardSection='overview'}>Overview</button><button class:active={cardSection==='links'} onclick={()=>cardSection='links'}>Links & planning</button>{#if (selected.organization?.role || 'task')==='task'}<button class:active={cardSection==='effort'} onclick={()=>cardSection='effort'}>Effort & time</button>{/if}</nav>{#if cardSection==='overview'}<p class="detail-description">{selected.description || 'No description yet.'}</p><div class="work-tags">{#each selected.labels as label}<button class={`label-pill label-${label}`} onclick={()=>navigate('all',label)}>{label}</button>{/each}</div><div class="inspector-actions">{#if selected.deleted}<button class="secondary-button" disabled={busy} onclick={()=>mutate('restore',selected.id)}>Restore</button>{:else if selected.status==='done'}<button class="secondary-button" disabled={busy} onclick={()=>mutate('reopen',selected.id)}>Reopen</button>{:else}{#if (selected.organization?.role || 'task')==='task'}<button class="primary-button" disabled={busy} onclick={()=>mutate(selected.timerStartedAt?'pause':'start',selected.id)}>{selected.timerStartedAt?'Ⅱ Pause':'▷ Start'}</button>{/if}<button class="secondary-button" disabled={busy} onclick={()=>mutate('complete',selected.id)}>✓ Complete</button>{/if}<button class="text-button" onclick={()=>compose(`Update ${reference(selected.id)}: `)}>Edit in chat</button></div>
@@ -356,7 +383,33 @@
       {:else}
       {#if a}<section class="assessment-summary"><div><strong>{wu(selected.status==='done'?a.totalUnits:a.units)} WU</strong><span>{mins(selected.status==='done'?a.predictedMinutes:a.remainingMinutes)} {selected.status==='done'?'estimated total':'estimated left'}</span></div><p>{a.reason}</p><small>{a.estimate.source==='starter'?'Starter estimate — scope not assessed':a.estimate.source==='user'?'Your assessment':'Assistant assessment'} · rough total range {mins(a.lowMinutes)}–{mins(a.highMinutes)}</small></section>{/if}
       <form class="estimate-editor" onsubmit={event=>{event.preventDefault();saveEstimate();}}><h3>What does this task ask of you?</h3><label>Estimated total focused minutes<input type="number" min="5" max="2400" step="1" required bind:value={estimateDraft.minutes} oninput={()=>estimateDirty=true}/></label>{#each factors as factor}<label class="factor-control"><span><strong>{factor.label}</strong><small>{factor.hint}</small></span><output>{estimateDraft[factor.key]}/5</output><input type="range" min="1" max="5" step="1" bind:value={estimateDraft[factor.key]} oninput={()=>estimateDirty=true}/></label>{/each}<div class="estimate-buttons"><button class="primary-button" disabled={busy||!estimateDirty}>Save estimate</button><button type="button" class="secondary-button" disabled={assessmentBusy||busy||estimateDraft.source==='user'} onclick={assessEstimate}>{assessmentBusy?'Assessing…':'Assess effort'}</button></div><p class="muted">Deadlines never reduce this effort estimate. Timers measure work; ratings teach the personal load weights.</p></form>
-      <section class="tracked-detail"><h3>Recorded work</h3><strong>{duration(elapsed(selected))}</strong><span>{selected.timeEntries?.length || 0} completed sessions</span>{#if selected.status==='done'}<p>How demanding did this feel?</p><label class="actual-time-label">Actual focused minutes <small>Optional · use if the timer was inaccurate</small><input type="number" min="5" max="960" step="1" bind:value={actualDraft} placeholder="Use tracked time" /></label><div class="rating-buttons"><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,1)}>Lighter</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,3)}>As expected</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,5)}>Draining</button></div>{/if}</section>
+      <section class="tracked-detail">
+        <h3>Recorded work</h3><strong>{duration(elapsed(selected))}</strong>
+        <span>{selected.timeEntries?.length || 0} completed sessions{selected.timerStartedAt?' · timer running':''}</span>
+        {#if !selected.deleted}
+          <form class="manual-time-form" onsubmit={event=>{event.preventDefault();changeTime('add_time',selected.id);}}>
+            <h4>Add work time</h4>
+            <label>Minutes<input type="number" min="1" max="1440" step="1" required bind:value={timeMinutes} placeholder="e.g. 30" /></label>
+            <label>Date<input type="date" max={today()} required bind:value={timeDate} /></label>
+            <button class="secondary-button" disabled={busy}>Add time</button>
+          </form>
+          <div class="recorded-sessions">
+            {#each [...selected.timeEntries].map((entry,index)=>({entry,index})).reverse() as item (item.index)}
+              <div class="recorded-session">
+                <div><strong>{duration(item.entry.durationMs)}</strong><small>{new Date(item.entry.endedAt).toLocaleDateString()} · {item.entry.manual?'Manual':'Timer'}</small></div>
+                {#if editingEntryIndex===item.index}
+                  <form onsubmit={event=>{event.preventDefault();changeTime('set_time',selected.id,item.index);}}><input type="number" min="1" max="1440" step="1" required aria-label="Correct session minutes" bind:value={editedMinutes}/><button disabled={busy}>Save</button><button type="button" onclick={()=>editingEntryIndex=null}>Cancel</button></form>
+                {:else}
+                  <button disabled={busy} onclick={()=>{editingEntryIndex=item.index;editedMinutes=Math.max(1,Math.round(item.entry.durationMs/60000));}}>Edit</button>
+                  <button class="remove-time" disabled={busy} aria-label={`Remove ${duration(item.entry.durationMs)} from ${selected.title}`} onclick={()=>changeTime('remove_time',selected.id,item.index)}>Remove</button>
+                {/if}
+              </div>
+            {/each}
+            {#if !selected.timeEntries.length}<p>No sessions recorded yet.</p>{/if}
+          </div>
+        {/if}
+        {#if selected.status==='done'}<p>How demanding did this feel?</p><label class="actual-time-label">Actual focused minutes <small>Optional calibration value · does not change recorded work</small><input type="number" min="5" max="960" step="1" bind:value={actualDraft} placeholder="Use tracked time" /></label><div class="rating-buttons"><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,1)}>Lighter</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,3)}>As expected</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,5)}>Draining</button></div>{/if}
+      </section>
       {/if}{#if selected.canvas}<section class="canvas-assignment"><strong>{selected.canvas.courseCode}</strong><p>{selected.canvas.dueAt?`Canvas deadline: ${new Date(selected.canvas.dueAt).toLocaleString()}`:'No Canvas deadline'}</p><button onclick={()=>openCanvasTask(selected)}>Open assignment in Canvas ↗</button><small>Local completion never submits coursework.</small></section>{/if}<button class="delete-action" disabled={busy||selected.deleted} onclick={()=>mutate('delete',selected.id)}>Move to Trash</button></div></div></div>{/if}
   <aside class="chat-panel" hidden={!chatOpen}><header class="chat-header" data-tauri-drag-region><div><strong>Conversation</strong><small>Capture, plan, and adjust.</small></div><button onclick={()=>chatOpen=false} aria-label="Close conversation">×</button></header><div class="chat-messages" aria-live="polite" aria-busy={chatBusy}>{#if !data?.messages.length}<div class="chat-welcome"><h2>Plan in your own words.</h2><p>Start with what you want to accomplish. I’ll help clarify the scope, suggest labels, and write a useful description.<br/>Try “Help me create a task for my project.”</p></div>{/if}{#each data?.messages || [] as message (message.id)}<div class={`message ${message.role}`}><div class="message-author">{message.role==='user'?'YOU':'CADENCE'}</div><div class="message-content">{message.content}</div>{#if message.taskIds.length}<div class="message-refs">{#each message.taskIds as id}<button onclick={()=>inspect(id)}>{reference(id)} ↗</button>{/each}</div>{/if}</div>{/each}{#if pending}<div class="message user"><div class="message-author">YOU</div><div class="message-content">{pending}</div></div>{/if}{#if chatBusy}<div class="thinking">{phase} {Math.max(0,Math.floor((clock-chatStarted)/1000))}s{#if clock-chatStarted>15000}<p>The assistant is still working. You can keep using your tasks.</p>{/if}</div>{/if}<div bind:this={chatEnd}></div></div><div class="chat-compose-area">{#if selected}<div class="context-chip">About {reference(selected.id)}<button onclick={()=>selectedId=null} aria-label="Clear task context">×</button></div>{/if}{#if !data?.configured}<button class="connect-banner" onclick={openSettings}>Connect OpenRouter to use chat →</button>{/if}<form class="composer" onsubmit={event=>{event.preventDefault();send();}}><textarea bind:this={composer} bind:value={input} disabled={chatBusy} rows="3" maxlength="20000" aria-label="Chat with Cadence" placeholder="What needs doing?" onkeydown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey){event.preventDefault();send();}}}></textarea><div class="composer-bottom"><span>Enter to send</span><button class="send-button" type="submit" disabled={chatBusy||busy||!input.trim()} aria-label="Send message">↑</button></div></form></div></aside>
 </div>
