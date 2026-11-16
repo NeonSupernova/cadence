@@ -1,8 +1,9 @@
 // Small, dependency-free celebration effects: confetti bursts and a soft chime.
 // Everything is skipped when the system asks to reduce motion.
 
-const COLORS = ['#5364d9', '#7c5cff', '#22b07d', '#f5b83d', '#ff6b8b', '#35c3f3'];
-type Particle = { x: number; y: number; vx: number; vy: number; size: number; color: string; spin: number; angle: number; life: number; shape: 0 | 1 | 2 };
+const COLORS = ['#7c5cff', '#14c8b0', '#ff5ca8', '#ffb938', '#3fa9ff', '#b36bff'];
+// Shapes: 0 ribbon, 1 dot, 2 star, 3 glowing four-point twinkle that floats.
+type Particle = { x: number; y: number; vx: number; vy: number; size: number; color: string; spin: number; angle: number; life: number; shape: 0 | 1 | 2 | 3; gravity: number; phase: number };
 
 let canvas: HTMLCanvasElement | null = null;
 let particles: Particle[] = [];
@@ -43,14 +44,20 @@ function loop() {
   ctx.clearRect(0, 0, innerWidth, innerHeight);
   particles = particles.filter(p => p.life > 0 && p.y < innerHeight + 40);
   for (const p of particles) {
-    p.vy += 0.32; p.vx *= 0.985; p.vy *= 0.985;
+    p.vy += p.gravity; p.vx *= 0.985; p.vy *= 0.985;
     p.x += p.vx; p.y += p.vy; p.angle += p.spin; p.life -= 1;
     ctx.save();
-    ctx.globalAlpha = Math.min(1, p.life / 30);
+    ctx.globalAlpha = Math.min(1, p.life / 30) * (p.shape === 3 ? 0.55 + 0.45 * Math.sin(p.life * 0.35 + p.phase) : 1);
     ctx.translate(p.x, p.y); ctx.rotate(p.angle);
     ctx.fillStyle = p.color;
     if (p.shape === 0) ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
     else if (p.shape === 1) { ctx.beginPath(); ctx.arc(0, 0, p.size / 2.6, 0, Math.PI * 2); ctx.fill(); }
+    else if (p.shape === 3) {
+      const r = p.size, w = p.size / 4.5;
+      ctx.shadowColor = p.color; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(w, -w, r, 0); ctx.quadraticCurveTo(w, w, 0, r); ctx.quadraticCurveTo(-w, w, -r, 0); ctx.quadraticCurveTo(-w, -w, 0, -r); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, w * .7, 0, Math.PI * 2); ctx.fill();
+    }
     else { ctx.beginPath(); for (let i = 0; i < 5; i++) { const a = (i * 4 * Math.PI) / 5 - Math.PI / 2; ctx.lineTo(Math.cos(a) * p.size / 1.8, Math.sin(a) * p.size / 1.8); } ctx.closePath(); ctx.fill(); }
     ctx.restore();
   }
@@ -64,7 +71,19 @@ function spawn(x: number, y: number, count: number, power: number, spread = Math
     const speed = power * (0.45 + Math.random() * 0.75);
     particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, size: 6 + Math.random() * 7,
       color: COLORS[Math.floor(Math.random() * COLORS.length)], spin: (Math.random() - 0.5) * 0.4, angle: Math.random() * Math.PI,
-      life: 70 + Math.random() * 50, shape: (Math.floor(Math.random() * 3) as 0 | 1 | 2) });
+      life: 70 + Math.random() * 50, shape: (Math.random() < 0.18 ? 3 : Math.floor(Math.random() * 3)) as Particle['shape'], gravity: 0.32, phase: Math.random() * 6 });
+  }
+  if (!frame) frame = requestAnimationFrame(loop);
+}
+
+/** A ring of floating twinkles, for starting something. Lighter than confetti. */
+function twinkles(x: number, y: number, count: number, power: number, colors = COLORS) {
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const speed = power * (0.5 + Math.random() * 0.6);
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 0.6, size: 4 + Math.random() * 6,
+      color: colors[Math.floor(Math.random() * colors.length)], spin: (Math.random() - 0.5) * 0.08, angle: 0,
+      life: 45 + Math.random() * 35, shape: 3, gravity: -0.015, phase: Math.random() * 6 });
   }
   if (!frame) frame = requestAnimationFrame(loop);
 }
@@ -112,6 +131,13 @@ export function celebrate() {
 }
 
 /** Center of an element, for anchoring a burst. */
+/** Starting a timer: a quick shimmer in the task's color. */
+export function sparkle(x: number, y: number, hue?: string) {
+  chime([1047, 1568], 0.04);
+  if (reducedMotion()) return;
+  twinkles(x, y, 14, 3.2, hue ? [hue, hue, '#ffffff', '#ffb938'] : COLORS);
+}
+
 /** A soft two-note bell for break reminders. */
 export function nudge() {
   chime([880, 1320, 880], 0.16);
