@@ -40,6 +40,9 @@ pub enum Status {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    /// Stable identity across synced devices. Local task numbers can differ between devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
     #[serde(default)]
     pub organization: crate::organization::Organization,
     pub id: i64,
@@ -70,6 +73,69 @@ pub struct Task {
     pub estimate: Option<crate::workload::Estimate>,
     #[serde(default)]
     pub baseline_estimate: Option<crate::workload::Estimate>,
+    #[serde(default)]
+    pub subtasks: Vec<Subtask>,
+}
+
+/// A small, checkable step inside a task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subtask {
+    pub title: String,
+    #[serde(default)]
+    pub done: bool,
+    #[serde(default)]
+    pub done_at: Option<String>,
+}
+
+pub const MAX_SUBTASKS: usize = 30;
+
+/// A random 128-bit identifier, hex encoded. Uses std's per-process random hash keys.
+pub fn new_uid() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let part = || {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        h.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+        h.finish()
+    };
+    format!("{:016x}{:016x}", part(), part())
+}
+
+/// How timers behave across the workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerSettings {
+    /// Allow several tasks to run timers at the same time.
+    pub multiple: bool,
+    /// Automatically stop a session after this many minutes. 0 disables the cutoff.
+    pub cap_minutes: u32,
+}
+impl Default for TimerSettings {
+    fn default() -> Self {
+        Self {
+            multiple: true,
+            cap_minutes: 240,
+        }
+    }
+}
+impl TimerSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.cap_minutes != 0 && !(15..=1440).contains(&self.cap_minutes) {
+            return Err("Choose a timer cutoff between 15 minutes and 24 hours, or turn it off.".into());
+        }
+        Ok(())
+    }
+    pub fn cap_ms(&self) -> Option<u64> {
+        (self.cap_minutes > 0).then(|| u64::from(self.cap_minutes) * 60_000)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +146,9 @@ pub struct TimeEntry {
     pub duration_ms: u64,
     #[serde(default)]
     pub manual: bool,
+    /// The session hit the timer cutoff and was stopped automatically.
+    #[serde(default)]
+    pub auto_stopped: bool,
 }
 impl Task {
     pub fn elapsed_ms_at(&self, now: chrono::DateTime<chrono::Utc>) -> u64 {
@@ -96,20 +165,45 @@ impl Task {
         )
     }
     pub fn stop_timer_at(&mut self, now: chrono::DateTime<chrono::Utc>) {
+        self.stop_timer_capped(now, None);
+    }
+    /// Stops the running session, ending it at the cutoff when it ran longer than `cap_ms`.
+    pub fn stop_timer_capped(&mut self, now: chrono::DateTime<chrono::Utc>, cap_ms: Option<u64>) {
         if let Some(started_at) = self.timer_started_at.take() {
             if let Ok(start) = chrono::DateTime::parse_from_rfc3339(&started_at) {
-                let duration_ms = (now - start.with_timezone(&chrono::Utc))
-                    .num_milliseconds()
-                    .max(0) as u64;
+                let start = start.with_timezone(&chrono::Utc);
+                let mut end = now.max(start);
+                let mut auto_stopped = false;
+                if let Some(cap) = cap_ms {
+                    let limit = start + chrono::Duration::milliseconds(cap as i64);
+                    if end > limit {
+                        end = limit;
+                        auto_stopped = true;
+                    }
+                }
+                let duration_ms = (end - start).num_milliseconds().max(0) as u64;
                 self.tracked_ms = self.tracked_ms.saturating_add(duration_ms);
                 self.time_entries.push(TimeEntry {
                     started_at,
-                    ended_at: now.to_rfc3339(),
+                    ended_at: end.to_rfc3339(),
                     duration_ms,
                     manual: false,
+                    auto_stopped,
                 });
             }
         }
+    }
+    /// True when the running session has passed the cutoff.
+    pub fn timer_over_cap(&self, now: chrono::DateTime<chrono::Utc>, cap_ms: Option<u64>) -> bool {
+        let (Some(cap), Some(start)) = (
+            cap_ms,
+            self.timer_started_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()),
+        ) else {
+            return false;
+        };
+        (now - start.with_timezone(&chrono::Utc)).num_milliseconds() > cap as i64
     }
 }
 
@@ -129,6 +223,7 @@ pub struct Stats {
     pub tracked_ms: u64,
     pub tracked_today_ms: u64,
     pub running_task_id: Option<i64>,
+    pub running_task_ids: Vec<i64>,
 }
 
 pub fn stats(tasks: &[Task]) -> Stats {
@@ -144,6 +239,7 @@ pub fn stats(tasks: &[Task]) -> Stats {
         s.tracked_ms = s.tracked_ms.saturating_add(t.elapsed_ms_at(now));
         if t.timer_started_at.is_some() {
             s.running_task_id = Some(t.id);
+            s.running_task_ids.push(t.id);
         }
         for entry in &t.time_entries {
             if entry.manual {
@@ -373,6 +469,8 @@ pub struct Action {
     pub date: Option<String>,
     #[serde(default)]
     pub entry_index: Option<usize>,
+    #[serde(default)]
+    pub subtasks: Option<Vec<String>>,
 }
 impl Action {
     pub fn status(kind: &str, id: i64) -> Self {
@@ -390,6 +488,7 @@ impl Action {
             minutes: None,
             date: None,
             entry_index: None,
+            subtasks: None,
         }
     }
 }
@@ -431,6 +530,8 @@ pub struct Snapshot {
     pub next_task_id: Option<i64>,
     pub show_list: bool,
     pub workload: crate::workload::Workload,
+    #[serde(default)]
+    pub timer: TimerSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -39,6 +39,7 @@ fn create(title: &str) -> Action {
         minutes: None,
         date: None,
         entry_index: None,
+        subtasks: None,
     }
 }
 fn add(s: &mut Store, title: &str) -> i64 {

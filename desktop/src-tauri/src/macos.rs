@@ -91,12 +91,20 @@ fn change(app: &AppHandle, kind: &str, id: i64, demo: bool) -> Result<(), String
 }
 fn running_change(app: &AppHandle, kind: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let task = database(&state.data_dir, false)?
+    let mut running: Vec<_> = database(&state.data_dir, false)?
         .tasks()?
         .into_iter()
-        .find(|t| !t.deleted && t.timer_started_at.is_some());
-    if let Some(task) = task {
-        change(app, kind, task.id, false)?;
+        .filter(|t| !t.deleted && t.timer_started_at.is_some())
+        .collect();
+    // Pause stops every running timer; Complete finishes the most recently started task.
+    running.sort_by(|a, b| b.timer_started_at.cmp(&a.timer_started_at));
+    let targets: Vec<_> = if kind == "pause" {
+        running.iter().map(|t| t.id).collect()
+    } else {
+        running.first().map(|t| t.id).into_iter().collect()
+    };
+    for id in targets {
+        change(app, kind, id, false)?;
     }
     Ok(())
 }
@@ -344,18 +352,36 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.state::<AppState>().data_dir.clone();
     std::thread::spawn(move || {
         // A native timer keeps the status item useful while every webview is hidden.
-        let Ok(store) = database(&path, false) else {
+        let Ok(mut store) = database(&path, false) else {
             return;
         };
+        let mut ticks: u32 = 0;
         while !stop.load(Ordering::Relaxed) {
+            if ticks.is_multiple_of(30) {
+                // Stop forgotten timers at the cutoff, even while every window is hidden.
+                if let Ok(stopped) = store.enforce_timer_cap() {
+                    if !stopped.is_empty() {
+                        let _ = handle.emit(
+                            "tasks-changed",
+                            serde_json::json!({ "demo": false, "reason": "cutoff", "ids": stopped }),
+                        );
+                    }
+                }
+            }
+            ticks = ticks.wrapping_add(1);
             if let Ok(tasks) = store.tasks() {
-                let running = tasks
+                let mut running: Vec<_> = tasks
                     .iter()
-                    .find(|t| !t.deleted && t.timer_started_at.is_some());
+                    .filter(|t| !t.deleted && t.timer_started_at.is_some())
+                    .collect();
+                running.sort_by(|a, b| b.timer_started_at.cmp(&a.timer_started_at));
                 let state = handle.state::<NativeState>();
-                if let Some(task) = running {
+                let clock = |task: &jev_tasks_core::Task| {
                     let seconds = task.elapsed_ms_at(chrono::Utc::now()) / 1000;
-                    let elapsed = format!("{}:{:02}", seconds / 60, seconds % 60);
+                    format!("{}:{:02}", seconds / 60, seconds % 60)
+                };
+                if let [task] = running.as_slice() {
+                    let elapsed = clock(task);
                     let _ = state.tray.set_title(Some(&elapsed));
                     let _ = state
                         .tray
@@ -363,13 +389,31 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = state
                         .info
                         .set_text(format!("TASK-{:03} · {}", task.id, task.title));
+                    let _ = state.pause.set_text("Pause Focus");
+                } else if let Some(newest) = running.first() {
+                    let _ = state
+                        .tray
+                        .set_title(Some(&format!("{} · {}", running.len(), clock(newest))));
+                    let _ = state.tray.set_tooltip(Some(
+                        running
+                            .iter()
+                            .map(|t| format!("{} · {}", t.title, clock(t)))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ));
+                    let _ = state.info.set_text(format!(
+                        "{} timers · newest TASK-{:03}",
+                        running.len(),
+                        newest.id
+                    ));
+                    let _ = state.pause.set_text("Pause All Timers");
                 } else {
                     let _ = state.tray.set_title(None::<&str>);
                     let _ = state.tray.set_tooltip(Some("Cadence — no timer running"));
                     let _ = state.info.set_text("No task in focus");
                 }
-                let _ = state.pause.set_enabled(running.is_some());
-                let _ = state.complete.set_enabled(running.is_some());
+                let _ = state.pause.set_enabled(!running.is_empty());
+                let _ = state.complete.set_enabled(!running.is_empty());
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }

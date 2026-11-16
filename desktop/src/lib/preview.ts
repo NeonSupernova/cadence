@@ -4,6 +4,7 @@ import { defaultView } from './types';
 export function preview(): Snapshot {
   const now = new Date().toISOString();
   const today = new Date().toLocaleDateString('en-CA');
+  const startedAgo = (m: number) => new Date(Date.now() - m * 60000).toISOString();
   const tasks = [
     { id: 1, title: 'Fix the checkout crash', description: 'Investigate the payment crash and get checkout working before launch.', type: 'bug', labels: ['work', 'coding', 'urgent'], priority: 96, status: 'in_progress', dueDate: today },
     { id: 2, title: 'Finish the database assignment', description: 'Complete the database assignment and review the SQL queries.', type: 'chore', labels: ['school', 'coding'], priority: 82, status: 'open', dueDate: today },
@@ -13,8 +14,9 @@ export function preview(): Snapshot {
     { id: 6, title: 'Send the weekly update', description: 'Share this week’s progress with the team.', type: 'chore', labels: ['work', 'writing'], priority: 50, status: 'done', dueDate: null },
   ].map(t => {
     const trackedMs = t.id === 1 ? 2520000 : t.id === 6 ? 900000 : 0;
-    return { ...t, raw: t.description, confidence: 0.96, createdAt: now, updatedAt: now, deleted: false, trackedMs, timerStartedAt: null,
-      timeEntries: trackedMs ? [{ startedAt: now, endedAt: now, durationMs: trackedMs, manual: true }] : [] };
+    return { ...t, raw: t.description, confidence: 0.96, createdAt: now, updatedAt: now, deleted: false, trackedMs, timerStartedAt: t.id === 1 ? startedAgo(42) : t.id === 3 ? startedAgo(229) : null,
+      timeEntries: trackedMs ? [{ startedAt: now, endedAt: now, durationMs: trackedMs, manual: true, autoStopped: t.id === 1 }] : [],
+      subtasks: t.id === 2 ? [{ title: 'Open the assignment and read the prompt', done: true, doneAt: now }, { title: 'Sketch the ERD on paper', done: true, doneAt: now }, { title: 'Write the CREATE TABLE statements', done: false, doneAt: null }, { title: 'Test three sample queries', done: false, doneAt: null }] : [] };
   }) as Task[];
   const assessments = Object.fromEntries(tasks.map(t => { const minutes = t.id===1 ? 90 : t.id===2 ? 75 : 30; return [t.id, { estimate: {minutes,technical:t.type==='bug'?4:2,tedium:3,ambiguity:3,switching:2,source:'starter'},predictedMinutes:minutes,remainingMinutes:minutes,units:minutes/25,totalUnits:minutes/25,lowMinutes:minutes/2,highMinutes:minutes*2,loadFactor:1,deadlinePressure:t.dueDate?1:0,fitScore:80,exceedsEstimate:false,reason:'Starter estimate. Review the task scope before relying on it.' }]; })) as Record<number,Assessment>;
   const days = Array.from({length:7}, (_,i) => {const date=new Date();date.setDate(date.getDate()+i); const weekday=(date.getDay()+6)%7;const minutes=weekday<5?120:60; return {date:date.toLocaleDateString('en-CA'),weekday,minutes,energy:3,capacityUnits:minutes/25,spentMinutes:0,spentUnits:0,remainingMinutes:minutes,remainingUnits:minutes/25,blocks:i===0?[{taskId:1,minutes:75,units:3,partial:true}]:[],learnedFactor:1};});

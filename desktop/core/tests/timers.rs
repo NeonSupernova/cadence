@@ -37,6 +37,11 @@ fn elapsed_time_and_pausing_are_exact_and_idempotent() {
 #[test]
 fn starting_another_task_pauses_the_previous_timer_in_one_transaction() {
     let mut s = store();
+    s.save_timer_settings(&TimerSettings {
+        multiple: false,
+        cap_minutes: 240,
+    })
+    .unwrap();
     s.apply(
         plan(vec![Action::status("start", 1)]),
         "start #1",
