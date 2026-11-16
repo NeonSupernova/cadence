@@ -88,3 +88,39 @@
 .update-bar>span{display:block;height:100%;background:var(--steps-grad);transition:width .3s}
 .update-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
 .update-actions .save-settings{flex:1}
+
+/* Settings: a sidebar of grouped sections and a roomy content pane. */
+.settings-modal.settings-shell{width:min(820px,100%);height:min(640px,calc(100dvh - 48px));padding:0;display:grid;grid-template-columns:200px minmax(0,1fr);overflow:hidden}
+.settings-nav{background:var(--canvas);border-right:1px solid var(--line);padding:22px 12px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.settings-nav h2{font-size:18px!important;margin:0 8px 14px!important;letter-spacing:-.4px}
+.settings-nav-label{font-size:9px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);margin:14px 8px 6px}
+.settings-nav button{display:flex;align-items:center;gap:9px;text-align:left;font-size:12px;padding:9px 8px;border-radius:7px;color:var(--ink)}
+.settings-nav button>span{width:18px;text-align:center;color:var(--muted)}
+.settings-nav button.chosen{background:var(--soft);color:var(--accent);font-weight:600}
+.settings-nav button.chosen>span{color:var(--accent)}
+.settings-dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--amber)}
+.settings-dot.new{background:var(--green)}
+.settings-body{overflow:auto;padding:24px 30px 28px}
+.settings-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding-bottom:16px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.settings-head h3{font-size:19px;font-weight:600;letter-spacing:-.4px;margin:0 0 4px}
+.settings-head p{font-size:12px;margin:0}
+.settings-head button{font-size:24px;line-height:1;color:var(--muted)}
+.settings-body .canvas-connect-intro{margin-top:14px}
+.settings-section .toggle-row{display:flex;align-items:flex-start;gap:10px;margin:18px 0 8px;font-size:12px}
+.settings-section .toggle-row input{margin-top:2px;width:16px}
+.toggle-row strong{display:block;font-weight:600}
+.toggle-row small{display:block;color:var(--muted);margin-top:4px;line-height:1.5}
+.break-rows{border:1px solid var(--line);border-radius:10px;margin:14px 0;transition:opacity .2s}
+.break-rows.dimmed{opacity:.5}
+.break-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.break-row:last-child{border-bottom:0}
+.break-icon{font-size:20px;text-align:center}
+.break-copy strong{display:block;font-size:12px;font-weight:600}
+.break-copy small{display:block;font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5}
+.break-row select{font-size:12px;padding:6px 8px}
+.settings-section .inline-field{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.settings-section .inline-field select{font-size:12px;padding:6px 8px;width:auto;margin-top:0}
+.quiet-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:18px;padding:12px 14px;background:var(--canvas);border-radius:9px}
+.quiet-row>span{margin-right:auto}
+.quiet-row .secondary-button{padding:7px 10px;font-size:11px}
+@media(max-width:700px){.settings-modal.settings-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.settings-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);padding:12px}.settings-nav h2,.settings-nav-label{display:none}}

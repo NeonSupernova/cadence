@@ -6,6 +6,7 @@
   import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization, TimerSettings, SyncStatus, UpdateCheck } from '$lib/types';
   import { burst, allSteps, celebrate, centerOf, soundsEnabled, setSoundsEnabled } from '$lib/celebrate';
   import { fly, scale } from 'svelte/transition';
+  import BreaksSettings from '$lib/settings/BreaksSettings.svelte';
 
   let data = $state<Snapshot | null>(null);
   let clock = $state(Date.now());
@@ -59,7 +60,25 @@
   let demo = $state(false);
   let browserPreview = $state(false);
   let settingsOpen = $state(false);
-  let settingsTab = $state<'assistant' | 'canvas' | 'focus' | 'sync' | 'updates'>('assistant');
+  type SettingsSection = 'focus' | 'breaks' | 'assistant' | 'canvas' | 'sync' | 'updates';
+  let settingsTab = $state<SettingsSection>('assistant');
+  // Grouped sections: add a section here and a branch in the settings markup.
+  const settingsGroups: { label: string; items: { id: SettingsSection; icon: string; title: string; blurb: string }[] }[] = [
+    { label: 'Focus', items: [
+      { id: 'focus', icon: '⏱', title: 'Timers', blurb: 'Run several timers and stop forgotten ones automatically.' },
+      { id: 'breaks', icon: '💧', title: 'Breaks', blurb: 'Gentle reminders to drink water, rest your eyes and move.' }
+    ] },
+    { label: 'Connections', items: [
+      { id: 'assistant', icon: '✧', title: 'Assistant', blurb: 'The AI that plans, writes and breaks tasks into steps.' },
+      { id: 'canvas', icon: '◐', title: 'Canvas', blurb: 'Bring assignments and their requirements into your tasks.' },
+      { id: 'sync', icon: '⇄', title: 'Sync', blurb: 'Keep tasks on every device through iCloud, OneDrive or any synced folder.' }
+    ] },
+    { label: 'App', items: [
+      { id: 'updates', icon: '↓', title: 'Updates', blurb: 'Check for a new version of Cadence and install it.' }
+    ] }
+  ];
+  const settingsSection = $derived(settingsGroups.flatMap(g => g.items).find(i => i.id === settingsTab)!);
+  function chooseSettings(id: SettingsSection) { settingsTab = id; settingsError = ''; if (id === 'updates' && !updateInfo && !updateError) checkForUpdates(); }
   let updateInfo = $state<UpdateCheck | null>(null);
   let updateBusy = $state<'' | 'checking' | 'installing'>('');
   let updateError = $state('');
@@ -81,7 +100,7 @@
     catch (e) { updateError = String(e); }
     finally { updateBusy = ''; }
   }
-  async function openUpdates() { await openSettings(); settingsTab = 'updates'; await checkForUpdates(); }
+  async function openUpdates() { await openSettings('updates'); await checkForUpdates(); }
   const megabytes = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
   let syncStatus = $state<SyncStatus | null>(null);
   let syncFolder = $state('');
@@ -117,7 +136,7 @@
   let canvasNotice = $state('');
   let canvasCount = $derived(data?.tasks.filter(t => t.canvas && !t.deleted && t.status !== 'done').length || 0);
   async function refreshCanvas() { if (browserPreview) return; try { canvas = await invoke<CanvasSettings>('get_canvas_settings'); if (canvas.error && !canvasNotice) canvasNotice = canvas.error; } catch (e) { canvasSettingsError = String(e); } }
-  function openCanvasSettings() { void openSettings(); settingsTab = 'canvas'; }
+  function openCanvasSettings() { void openSettings('canvas'); }
   function showCanvas() { if (busy) return; if (!canvas.configured) { openCanvasSettings(); return; } demo = false; selectedId = null; navigate('all', 'canvas'); }
   async function syncCanvas() {
     if (canvasBusy || browserPreview) return;
@@ -407,8 +426,8 @@
     if (busy || browserPreview) return;
     demo = !demo; selectedId = null; view = defaultView(); await refresh();
   }
-  async function openSettings() {
-    settingsOpen = true; settingsTab = 'assistant'; settingsError = ''; apiKey = ''; canvasFormToken = ''; canvasSettingsError = '';
+  async function openSettings(section: SettingsSection = 'assistant') {
+    settingsOpen = true; settingsTab = section; settingsError = ''; apiKey = ''; canvasFormToken = ''; canvasSettingsError = '';
     timerDraft = { ...timer }; soundsDraft = soundsEnabled();
     loadSync().then(syncForm);
     if (browserPreview) return;
@@ -491,7 +510,7 @@
     <div class="nav-label">CONNECTED</div>
     <div class="canvas-sidebar"><button disabled={busy} onclick={showCanvas}><span class="canvas-glyph">◉</span><span>Canvas<small>{canvasBusy?'Syncing…':canvas.error?'Needs attention':canvas.configured?`${canvasCount} remaining`:'Connect courses'}</small></span></button><button disabled={canvasBusy||browserPreview} onclick={syncCanvas} aria-label="Sync Canvas">↻</button></div>
     <details class="labels-disclosure"><summary>Labels <span>{labels.length}</span></summary>{#each labels as [label,count]}<button onclick={() => navigate('all',label)}><span class="label-dot"></span>{label}<small>{count}</small></button>{/each}</details>
-    <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={openSettings}>⚙ Connections</button>{#if syncStatus?.enabled}<button class="local-workspace sync-line" class:sync-problem={Boolean(syncStatus.error)} onclick={()=>{openSettings().then(()=>settingsTab='sync');}} title={syncStatus.error || `Last synced ${ago(syncStatus.lastSyncedAt)}`}><span class="online-dot"></span>{syncStatus.error ? 'Sync needs attention' : `Synced via ${providerOf(syncStatus.folder)}`}<small>{syncStatus.error ? 'Open sync settings' : `${syncStatus.devices.length} other device${syncStatus.devices.length===1?'':'s'} · ${ago(syncStatus.lastSyncedAt)}`}</small></button>{:else}<div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div>{/if}</div>
+    <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={() => openSettings('focus')}>⚙ Settings</button>{#if syncStatus?.enabled}<button class="local-workspace sync-line" class:sync-problem={Boolean(syncStatus.error)} onclick={()=>openSettings('sync')} title={syncStatus.error || `Last synced ${ago(syncStatus.lastSyncedAt)}`}><span class="online-dot"></span>{syncStatus.error ? 'Sync needs attention' : `Synced via ${providerOf(syncStatus.folder)}`}<small>{syncStatus.error ? 'Open sync settings' : `${syncStatus.devices.length} other device${syncStatus.devices.length===1?'':'s'} · ${ago(syncStatus.lastSyncedAt)}`}</small></button>{:else}<div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div>{/if}</div>
   </aside>
   <main>
     <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>⌘K</kbd></button></div></header>
@@ -574,15 +593,23 @@
         {#if selected.status==='done'}<p>How demanding did this feel?</p><label class="actual-time-label">Actual focused minutes <small>Optional calibration value · does not change recorded work</small><input type="number" min="5" max="960" step="1" bind:value={actualDraft} placeholder="Use tracked time" /></label><div class="rating-buttons"><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,1)}>Lighter</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,3)}>As expected</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,5)}>Draining</button></div>{/if}
       </section>
       {/if}{#if selected.canvas}<section class="canvas-assignment"><strong>{selected.canvas.courseCode}</strong><p>{selected.canvas.dueAt?`Canvas deadline: ${new Date(selected.canvas.dueAt).toLocaleString()}`:'No Canvas deadline'}</p><button onclick={()=>openCanvasTask(selected)}>Open assignment in Canvas ↗</button><small>Local completion never submits coursework.</small></section>{/if}<button class="delete-action" disabled={busy||selected.deleted} onclick={()=>mutate('delete',selected.id)}>Move to Trash</button></div></div></div>{/if}
-  <aside class="chat-panel" hidden={!chatOpen}><header class="chat-header" data-tauri-drag-region><div><strong>Conversation</strong><small>Capture, plan, and adjust.</small></div><button onclick={()=>chatOpen=false} aria-label="Close conversation">×</button></header><div class="chat-messages" aria-live="polite" aria-busy={chatBusy}>{#if !data?.messages.length}<div class="chat-welcome"><h2>Plan in your own words.</h2><p>Start with what you want to accomplish. I’ll help clarify the scope, suggest labels, and write a useful description.<br/>Try “Help me create a task for my project.”</p></div>{/if}{#each data?.messages || [] as message (message.id)}<div class={`message ${message.role}`}><div class="message-author">{message.role==='user'?'YOU':'CADENCE'}</div><div class="message-content">{message.content}</div>{#if message.taskIds.length}<div class="message-refs">{#each message.taskIds as id}<button onclick={()=>inspect(id)}>{reference(id)} ↗</button>{/each}</div>{/if}</div>{/each}{#if pending}<div class="message user"><div class="message-author">YOU</div><div class="message-content">{pending}</div></div>{/if}{#if chatBusy}<div class="thinking">{phase} {Math.max(0,Math.floor((clock-chatStarted)/1000))}s{#if clock-chatStarted>15000}<p>The assistant is still working. You can keep using your tasks.</p>{/if}</div>{/if}<div bind:this={chatEnd}></div></div><div class="chat-compose-area">{#if selected}<div class="context-chip">About {reference(selected.id)}<button onclick={()=>selectedId=null} aria-label="Clear task context">×</button></div>{/if}{#if !data?.configured}<button class="connect-banner" onclick={openSettings}>Connect OpenRouter to use chat →</button>{/if}<form class="composer" onsubmit={event=>{event.preventDefault();send();}}><textarea bind:this={composer} bind:value={input} disabled={chatBusy} rows="3" maxlength="20000" aria-label="Chat with Cadence" placeholder="What needs doing?" onkeydown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey){event.preventDefault();send();}}}></textarea><div class="composer-bottom"><span>Enter to send</span><button class="send-button" type="submit" disabled={chatBusy||busy||!input.trim()} aria-label="Send message">↑</button></div></form></div></aside>
+  <aside class="chat-panel" hidden={!chatOpen}><header class="chat-header" data-tauri-drag-region><div><strong>Conversation</strong><small>Capture, plan, and adjust.</small></div><button onclick={()=>chatOpen=false} aria-label="Close conversation">×</button></header><div class="chat-messages" aria-live="polite" aria-busy={chatBusy}>{#if !data?.messages.length}<div class="chat-welcome"><h2>Plan in your own words.</h2><p>Start with what you want to accomplish. I’ll help clarify the scope, suggest labels, and write a useful description.<br/>Try “Help me create a task for my project.”</p></div>{/if}{#each data?.messages || [] as message (message.id)}<div class={`message ${message.role}`}><div class="message-author">{message.role==='user'?'YOU':'CADENCE'}</div><div class="message-content">{message.content}</div>{#if message.taskIds.length}<div class="message-refs">{#each message.taskIds as id}<button onclick={()=>inspect(id)}>{reference(id)} ↗</button>{/each}</div>{/if}</div>{/each}{#if pending}<div class="message user"><div class="message-author">YOU</div><div class="message-content">{pending}</div></div>{/if}{#if chatBusy}<div class="thinking">{phase} {Math.max(0,Math.floor((clock-chatStarted)/1000))}s{#if clock-chatStarted>15000}<p>The assistant is still working. You can keep using your tasks.</p>{/if}</div>{/if}<div bind:this={chatEnd}></div></div><div class="chat-compose-area">{#if selected}<div class="context-chip">About {reference(selected.id)}<button onclick={()=>selectedId=null} aria-label="Clear task context">×</button></div>{/if}{#if !data?.configured}<button class="connect-banner" onclick={() => openSettings()}>Connect OpenRouter to use chat →</button>{/if}<form class="composer" onsubmit={event=>{event.preventDefault();send();}}><textarea bind:this={composer} bind:value={input} disabled={chatBusy} rows="3" maxlength="20000" aria-label="Chat with Cadence" placeholder="What needs doing?" onkeydown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey){event.preventDefault();send();}}}></textarea><div class="composer-bottom"><span>Enter to send</span><button class="send-button" type="submit" disabled={chatBusy||busy||!input.trim()} aria-label="Send message">↑</button></div></form></div></aside>
 </div>
 
 {#if settingsOpen}
-  <div class="modal-backdrop" role="presentation"><div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
-    <div class="modal-title"><span class="assistant-mark">✧</span><button aria-label="Close settings" onclick={() => settingsOpen = false}>×</button></div>
-    <h2 id="settings-title">Connections</h2><p>Your assistant, your coursework, one place to focus.</p>
-    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button><button class:chosen={settingsTab === 'focus'} onclick={() => settingsTab = 'focus'}>Focus</button><button class:chosen={settingsTab === 'sync'} onclick={() => settingsTab = 'sync'}>Sync</button><button class:chosen={settingsTab === 'updates'} onclick={() => { settingsTab = 'updates'; if (!updateInfo && !updateError) checkForUpdates(); }}>Updates</button></div>
-    {#if settingsTab === 'assistant'}
+  <div class="modal-backdrop" role="presentation" onkeydown={e => { if (e.key === 'Escape') settingsOpen = false; }}><div class="settings-modal settings-shell" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+    <nav class="settings-nav" aria-label="Settings sections">
+      <h2 id="settings-title">Settings</h2>
+      {#each settingsGroups as group (group.label)}
+        <div class="settings-nav-label">{group.label}</div>
+        {#each group.items as item (item.id)}<button class:chosen={settingsTab === item.id} aria-current={settingsTab === item.id ? 'page' : undefined} onclick={() => chooseSettings(item.id)}><span aria-hidden="true">{item.icon}</span>{item.title}{#if item.id === 'assistant' && !settings.configured}<i class="settings-dot" title="Not connected"></i>{:else if item.id === 'sync' && syncStatus?.error}<i class="settings-dot" title="Needs attention"></i>{:else if item.id === 'updates' && updateInfo?.available}<i class="settings-dot new" title="Update available"></i>{/if}</button>{/each}
+      {/each}
+    </nav>
+    <section class="settings-body">
+    <header class="settings-head"><div><h3>{settingsSection.title}</h3><p>{settingsSection.blurb}</p></div><button aria-label="Close settings" onclick={() => settingsOpen = false}>×</button></header>
+    {#if settingsTab === 'breaks'}
+      <BreaksSettings onsaved={message => { notice = message; }} />
+    {:else if settingsTab === 'assistant'}
       <form onsubmit={(event) => { event.preventDefault(); saveSettings(); }}><label>OpenRouter API key<input type="password" bind:value={apiKey} autocomplete="off" placeholder={settings.configured ? 'Connected · leave blank to keep your key' : 'sk-or-…'} /></label><label>Writing & reasoning model<input bind:value={settings.model} placeholder="google/gemini-2.5-flash" /></label><label>Jev model<input bind:value={settings.jevModel} /></label><label>Reasoning effort<select bind:value={settings.reasoningEffort}><option value="minimal">Minimal · quickest</option><option value="low">Low · fast and thoughtful</option><option value="medium">Medium</option><option value="high">High · more thinking time</option></select></label><p class="settings-note">Your key is stored locally with restricted file permissions. Chat sends task context, including imported assignment descriptions, to OpenRouter.</p>{#if settingsError}<div class="settings-error" role="alert">{settingsError}</div>{/if}<button class="primary-button save-settings" disabled={settingsBusy || browserPreview}>{settingsBusy ? 'Saving…' : 'Save assistant settings'}<span>→</span></button></form>
     {:else if settingsTab === 'updates'}
       <div class="update-panel">
@@ -636,5 +663,6 @@
         <button class="primary-button save-settings" disabled={canvasSaving || canvasBusy || browserPreview}>{canvasBusy ? 'Syncing Canvas…' : canvasSaving ? 'Saving…' : 'Save & sync assignments'}<span>↻</span></button>
       </form>
     {/if}
+    </section>
   </div></div>
 {/if}
