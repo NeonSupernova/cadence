@@ -3,7 +3,7 @@
   import { invoke, desktop, progress, listen } from '$lib/bridge';
   import { preview } from '$lib/preview';
   import { defaultView, reference, defaultTimer } from '$lib/types';
-  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization, TimerSettings, SyncStatus } from '$lib/types';
+  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization, TimerSettings, SyncStatus, UpdateCheck } from '$lib/types';
   import { burst, allSteps, celebrate, centerOf, soundsEnabled, setSoundsEnabled } from '$lib/celebrate';
   import { fly, scale } from 'svelte/transition';
 
@@ -59,7 +59,30 @@
   let demo = $state(false);
   let browserPreview = $state(false);
   let settingsOpen = $state(false);
-  let settingsTab = $state<'assistant' | 'canvas' | 'focus' | 'sync'>('assistant');
+  let settingsTab = $state<'assistant' | 'canvas' | 'focus' | 'sync' | 'updates'>('assistant');
+  let updateInfo = $state<UpdateCheck | null>(null);
+  let updateBusy = $state<'' | 'checking' | 'installing'>('');
+  let updateError = $state('');
+  let updateProgress = $state<{ downloaded: number; total: number | null } | null>(null);
+  let updateCheckedAt = $state(0);
+  async function checkForUpdates() {
+    if (updateBusy) return;
+    if (browserPreview) { updateError = 'Open the desktop app to check for updates.'; return; }
+    updateBusy = 'checking'; updateError = '';
+    try { updateInfo = await invoke<UpdateCheck>('check_for_update'); updateCheckedAt = Date.now(); }
+    catch (e) { updateError = String(e); }
+    finally { updateBusy = ''; }
+  }
+  async function installUpdate() {
+    if (updateBusy || !updateInfo?.available) return;
+    updateBusy = 'installing'; updateError = ''; updateProgress = null;
+    // On success the app restarts into the new version, so this only returns on failure.
+    try { await invoke('install_available_update'); }
+    catch (e) { updateError = String(e); }
+    finally { updateBusy = ''; }
+  }
+  async function openUpdates() { await openSettings(); settingsTab = 'updates'; await checkForUpdates(); }
+  const megabytes = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
   let syncStatus = $state<SyncStatus | null>(null);
   let syncFolder = $state('');
   let syncDevice = $state('');
@@ -243,6 +266,7 @@
     if (event.demo !== undefined && event.demo !== demo) return;
     switch (event.action) {
       case 'settings': await openSettings(); break;
+      case 'check-updates': await openUpdates(); break;
       case 'new-task': createGuided(); break;
       case 'find-task': screen = 'next'; await tick(); searchField?.focus(); break;
       case 'focus-view': screen = 'now'; break;
@@ -438,6 +462,7 @@
       }),
       listen('appearance-changed', syncAppearance),
       listen<SyncStatus>('sync-status', status => { syncStatus = status; }),
+      listen<{ downloaded: number; total: number | null }>('update-progress', p => { updateProgress = p; }),
       listen<{ demo?: boolean; reason?: string }>('tasks-changed', event => {
         if (event.demo !== undefined && event.demo !== demo) return;
         if (event.reason === 'sleep') nativeNote = 'Focus paused when your Mac went to sleep. Resume when you’re ready.';
@@ -556,9 +581,26 @@
   <div class="modal-backdrop" role="presentation"><div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
     <div class="modal-title"><span class="assistant-mark">✧</span><button aria-label="Close settings" onclick={() => settingsOpen = false}>×</button></div>
     <h2 id="settings-title">Connections</h2><p>Your assistant, your coursework, one place to focus.</p>
-    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button><button class:chosen={settingsTab === 'focus'} onclick={() => settingsTab = 'focus'}>Focus</button><button class:chosen={settingsTab === 'sync'} onclick={() => settingsTab = 'sync'}>Sync</button></div>
+    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button><button class:chosen={settingsTab === 'focus'} onclick={() => settingsTab = 'focus'}>Focus</button><button class:chosen={settingsTab === 'sync'} onclick={() => settingsTab = 'sync'}>Sync</button><button class:chosen={settingsTab === 'updates'} onclick={() => { settingsTab = 'updates'; if (!updateInfo && !updateError) checkForUpdates(); }}>Updates</button></div>
     {#if settingsTab === 'assistant'}
       <form onsubmit={(event) => { event.preventDefault(); saveSettings(); }}><label>OpenRouter API key<input type="password" bind:value={apiKey} autocomplete="off" placeholder={settings.configured ? 'Connected · leave blank to keep your key' : 'sk-or-…'} /></label><label>Writing & reasoning model<input bind:value={settings.model} placeholder="google/gemini-2.5-flash" /></label><label>Jev model<input bind:value={settings.jevModel} /></label><label>Reasoning effort<select bind:value={settings.reasoningEffort}><option value="minimal">Minimal · quickest</option><option value="low">Low · fast and thoughtful</option><option value="medium">Medium</option><option value="high">High · more thinking time</option></select></label><p class="settings-note">Your key is stored locally with restricted file permissions. Chat sends task context, including imported assignment descriptions, to OpenRouter.</p>{#if settingsError}<div class="settings-error" role="alert">{settingsError}</div>{/if}<button class="primary-button save-settings" disabled={settingsBusy || browserPreview}>{settingsBusy ? 'Saving…' : 'Save assistant settings'}<span>→</span></button></form>
+    {:else if settingsTab === 'updates'}
+      <div class="update-panel">
+        <p class="canvas-connect-intro">Cadence checks for a new version every few hours and installs it quietly. Check here any time, and install right away.</p>
+        <div class="canvas-sync-report update-status" aria-live="polite">
+          {#if updateBusy === 'checking'}<strong>Checking for updates…</strong>
+          {:else if updateBusy === 'installing'}<strong>Downloading Cadence {updateInfo?.available}…</strong>{#if updateProgress}<div class="update-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={updateProgress.total ? Math.round(updateProgress.downloaded / updateProgress.total * 100) : undefined}><span style={`width:${updateProgress.total ? Math.min(100, updateProgress.downloaded / updateProgress.total * 100) : 30}%`}></span></div><small>{megabytes(updateProgress.downloaded)}{updateProgress.total ? ` of ${megabytes(updateProgress.total)}` : ''} · Cadence restarts when it's ready. Your tasks are saved.</small>{/if}
+          {:else if updateInfo?.available}<strong>✨ Cadence {updateInfo.available} is available</strong><small>You have {updateInfo.currentVersion}{updateInfo.date ? ` · released ${new Date(updateInfo.date).toLocaleDateString()}` : ''}</small>{#if updateInfo.notes}<p class="update-notes">{updateInfo.notes}</p>{/if}
+          {:else if updateInfo}<strong>✓ You're up to date</strong><small>Cadence {updateInfo.currentVersion} · checked {ago(new Date(updateCheckedAt).toISOString())}</small>
+          {:else}<strong>Cadence updates</strong><small>Not checked yet</small>{/if}
+        </div>
+        {#if updateError}<div class="settings-error" role="alert">{updateError}</div>{/if}
+        {#if updateInfo?.available && !updateInfo.canInstall}<p class="settings-note">This is a development build, so it won't replace itself. Download the release to install.</p>{/if}
+        <div class="update-actions">
+          {#if updateInfo?.available && updateInfo.canInstall}<button class="primary-button save-settings" disabled={Boolean(updateBusy)} onclick={installUpdate}>{updateBusy === 'installing' ? 'Installing…' : 'Install & restart'}<span>↓</span></button>{/if}
+          <button class="secondary-button" disabled={Boolean(updateBusy) || browserPreview} onclick={checkForUpdates}>{updateBusy === 'checking' ? 'Checking…' : 'Check for updates'}</button>
+        </div>
+      </div>
     {:else if settingsTab === 'sync'}
       <form onsubmit={event => { event.preventDefault(); saveSync(); }}>
         <p class="canvas-connect-intro">Keep your tasks on every device through a folder you already sync, like Obsidian does. Each device writes only its own file in <strong>Cadence Sync</strong>, so iCloud or OneDrive never has to untangle two edits to one file.</p>

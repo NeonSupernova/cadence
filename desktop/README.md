@@ -22,6 +22,8 @@ Open **Settings → Sync**, pick iCloud Drive, OneDrive, Dropbox or Google Drive
 
 The sidebar shows which folder you sync through, how many other devices it sees, and when it last synced. A phone app is not built yet: iOS access to iCloud Drive needs a mobile build with an iCloud container entitlement. A direct device-to-device link (QR pairing and public keys over MQTT) is a possible later transport using the same merge rules.
 
+Updates: Cadence checks GitHub Releases every six hours and installs signed updates quietly, restarting into the new version (tasks are saved in SQLite, so nothing is lost). To check right away, choose **Cadence → Check for Updates…** on macOS or **Settings → Updates** on any platform. It shows your version and either confirms you're up to date or offers **Install & restart** with download progress and release notes. Development builds can check but never replace themselves.
+
 Canvas integration:
 
 1. Open **Settings → Canvas** and enter your Canvas site URL (defaults to `https://pcci.instructure.com`).

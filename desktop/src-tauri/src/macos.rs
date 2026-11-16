@@ -118,7 +118,7 @@ pub fn handle_menu(app: &AppHandle, id: &str) {
     match id {
         "quick-capture" => report(app, quick_capture(app)),
         "open-main" => show_main(app),
-        "settings" | "new-task" | "find-task" | "focus-view" | "next-view" | "journal-view"
+        "settings" | "check-updates" | "new-task" | "find-task" | "focus-view" | "next-view" | "journal-view"
         | "toggle-timer" | "complete-selected" => ui_action(app, id),
         "pause-running" => report(app, running_change(app, "pause")),
         "complete-running" => report(app, running_change(app, "complete")),
@@ -232,6 +232,7 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         true,
         &[
             &Native::about(app, None, None)?,
+            &item(app, "check-updates", "Check for Updates…", None)?,
             &Native::separator(app)?,
             &item(app, "settings", "Settings…", Some("CmdOrCtrl+,"))?,
             &Native::separator(app)?,

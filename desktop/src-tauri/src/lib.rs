@@ -383,7 +383,11 @@ pub fn run() {
             workload_integration::break_down_task,
             sync_integration::get_sync_settings,
             sync_integration::save_sync_settings,
-            sync_integration::sync_now
+            sync_integration::sync_now,
+            #[cfg(desktop)]
+            updater::check_for_update,
+            #[cfg(desktop)]
+            updater::install_available_update
         ])
         .build(tauri::generate_context!())
         .expect("Could not start Cadence")
