@@ -158,6 +158,8 @@ fn invalid_remote_tasks_are_skipped_and_bad_links_are_dropped() {
     let mut a = store();
     let id = create(&mut a, "Fine");
     let mut records = a.export_sync().unwrap();
+    // Sorts after "bad", which also asks for TASK-001: an invalid task must not claim it.
+    records[0].uid = "zzz-fine".into();
     let mut bad = records[0].clone();
     bad.uid = "bad".into();
     bad.task.title = String::new();

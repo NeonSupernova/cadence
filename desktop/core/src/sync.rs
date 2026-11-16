@@ -137,7 +137,11 @@ impl Store {
         // Several files may carry the same task; keep the newest copy of each.
         let mut incoming: BTreeMap<String, SyncTask> = BTreeMap::new();
         for record in records {
-            if record.uid.trim().is_empty() || record.uid.len() > 300 {
+            // Reject invalid tasks before numbering, so they can't claim a task number.
+            if record.uid.trim().is_empty()
+                || record.uid.len() > 300
+                || validate_task(&record.task).is_err()
+            {
                 report.skipped += 1;
                 continue;
             }
