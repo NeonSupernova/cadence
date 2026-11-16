@@ -24,5 +24,7 @@ export function preview(): Snapshot {
   return { workload, showList: false, nextTaskId: 1, tasks, visible: tasks.filter(t => t.status !== 'done'), stats: { total: 6, active: 5, completed: 1, highPriority: 2, dueToday: 2, overdue: 0, completionRate: 17, completedThisWeek: 1, trackedMs: 3420000, trackedTodayMs: 3420000, runningTaskId: null, labels: { work: 3, coding: 3, school: 1, home: 1, planning: 1, health: 1, urgent: 1, writing: 1 }, types: { bug: 1, chore: 2, personal: 2, research: 1 } }, messages: [
     { id: 1, role: 'user', content: 'I need to fix the checkout crash before launch. It’s blocking everything.', taskIds: [], createdAt: now },
     { id: 2, role: 'assistant', content: 'Added it as a high priority bug, with work, coding, and urgent labels. It’s at the top of your list.', taskIds: [1], createdAt: now },
+    { id: 3, role: 'user', content: 'Plan the rest of my day', taskIds: [], createdAt: now },
+    { id: 4, role: 'assistant', content: 'You have about **2 h 10 min** left today. Here’s what fits:\n- TASK-001 Fix the checkout crash, 50 min. It blocks launch.\n- TASK-003 Reply to the design review, 15 min. Quick win.\n- TASK-002 Outline the essay, 45 min. Due Friday.\n\nThe grocery run won’t fit today, so I left it for tomorrow.', taskIds: [], createdAt: now },
   ], view: defaultView(), focusIds: [], configured: false, model: 'google/gemini-2.5-flash', demo: true };
 }

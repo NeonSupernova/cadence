@@ -1,5 +1,5 @@
 use jev_tasks_core::ai::PlanningContext;
-use jev_tasks_core::{Action, Config, Plan, Router, Snapshot, Store, View};
+use jev_tasks_core::{Action, Classification, Config, Plan, Router, Snapshot, Store, View};
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
@@ -278,22 +278,30 @@ async fn process_chat(
         drop(store);
         drop(_guard);
         let router = Router { config: Config::load(&data_dir) };
-        let _ = app.emit("chat-progress", "Organizing your request…");
-        let (classification, intent) = router.classify(message, &tasks)?;
-        let _ = app.emit("chat-progress", "Working out the details…");
-        let mut plan = router.plan(PlanningContext { input: message, tasks: &tasks, messages: &history, view: &request.view, selected: request.selected_id, classification: &classification, intent: &intent, workload: &workload })?;
+        let _ = app.emit("chat-progress", "Thinking it through…");
+        let mut plan = router.plan(PlanningContext { input: message, tasks: &tasks, messages: &history, view: &request.view, selected: request.selected_id, workload: &workload })?;
         if capture_only && (plan.actions.len() != 1 || plan.actions[0].kind != "create" || plan.capacity.is_some() || plan.checkin.is_some() || plan.feedback.is_some()) {
             return Err("Quick Capture only adds a new task. Open the main window to change existing tasks.".into());
         }
-        if plan.actions.iter().filter(|a| a.kind == "create").count() > 1 {
-            for action in plan.actions.iter_mut().filter(|a| a.kind == "create") {
-                let text = format!("{}\n{}", action.title.as_deref().unwrap_or(""), action.description.as_deref().unwrap_or(""));
-                let (c, _) = router.classify(&text, &tasks)?;
-                if action.task_type.is_none(){action.task_type = Some(c.kind);}
-                if action.labels.is_none(){action.labels = Some(c.labels);}
-                if action.priority.is_none(){action.priority = Some(c.priority);}
-                if action.estimate.is_none(){action.estimate=c.estimate;}
-            }
+        // Jev classifies only new tasks, and a Jev outage never blocks the chat.
+        let mut classification: Option<Classification> = None;
+        if plan.actions.iter().any(|a| a.kind == "create") {
+            let _ = app.emit("chat-progress", "Sorting the new tasks…");
+        }
+        for action in plan.actions.iter_mut().filter(|a| a.kind == "create") {
+            let text = format!("{}\n{}", action.title.as_deref().unwrap_or(""), action.description.as_deref().unwrap_or(""));
+            let c = router.classify(&text, &tasks).map(|(c, _)| c).unwrap_or_else(|_| Classification {
+                kind: action.task_type.clone().unwrap_or_else(|| "chore".into()),
+                labels: action.labels.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| vec!["inbox".into()]),
+                priority: action.priority.unwrap_or(50),
+                confidence: 0.0,
+                estimate: None,
+            });
+            if action.task_type.is_none() { action.task_type = Some(c.kind.clone()); }
+            if action.labels.as_ref().is_none_or(|l| l.is_empty()) { action.labels = Some(c.labels.clone()); }
+            if action.priority.is_none() { action.priority = Some(c.priority); }
+            if action.estimate.is_none() { action.estimate = c.estimate.clone(); }
+            classification.get_or_insert(c);
         }
         let show_list = plan.view.is_some();
         let view = plan.view.clone().unwrap_or_else(|| request.view.clone());
@@ -302,7 +310,7 @@ async fn process_chat(
         let mut store = database(&data_dir, request.demo)?;
         let current = store.tasks()?;
         jev_tasks_core::store::validate_chat_version(&task_version, &current, &plan)?;
-        let focus = store.apply(plan, message, Some(&classification), true)?;
+        let focus = store.apply(plan, message, classification.as_ref(), true)?;
         let _ = app.emit("tasks-changed", serde_json::json!({ "demo": request.demo }));
         let mut result = snapshot(&data_dir, Request { view, ..request }, focus)?;
         result.show_list = show_list;
