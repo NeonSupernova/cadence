@@ -41,3 +41,9 @@ export type TimerSettings = { multiple: boolean; capMinutes: number };
 export const defaultTimer = (): TimerSettings => ({ multiple: true, capMinutes: 240 });
 export type SyncStatus = { enabled: boolean; folder: string | null; deviceName: string; providers: { name: string; path: string }[]; lastSyncedAt: string | null; devices: { name: string; exportedAt: string; tasks: number }[]; report: { created: number; updated: number; skipped: number } | null; warnings: string[]; error: string | null };
 export type UpdateCheck = { currentVersion: string; available: string | null; notes: string | null; date: string | null; canInstall: boolean };
+export type Reminder = 'water' | 'eyes' | 'stretch';
+export type ReminderResponse = 'done' | 'snooze' | 'skip' | 'timeout';
+export interface MindfulSettings { enabled: boolean; waterMinutes: number; eyesMinutes: number; stretchMinutes: number; displaySeconds: number }
+export interface MindfulStatus { settings: MindfulSettings; quietUntil: string | null }
+export interface ShowingReminder { kind: Reminder; seconds: number; variant: number; preview: boolean }
+export const defaultMindful: MindfulSettings = { enabled: true, waterMinutes: 45, eyesMinutes: 20, stretchMinutes: 60, displaySeconds: 25 };

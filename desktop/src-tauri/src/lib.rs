@@ -8,6 +8,7 @@ use std::{
 use tauri::{Emitter, Manager, State};
 mod canvas_integration;
 mod sync_integration;
+mod mindful_integration;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(desktop)]
@@ -336,6 +337,7 @@ pub fn run() {
             macos::setup(app.handle())?;
             canvas_integration::start_background(app.handle());
             sync_integration::start_background(app.handle());
+            mindful_integration::start_background(app.handle());
             #[cfg(desktop)]
             {
                 app.handle()
@@ -384,6 +386,12 @@ pub fn run() {
             sync_integration::get_sync_settings,
             sync_integration::save_sync_settings,
             sync_integration::sync_now,
+            mindful_integration::mindful_current,
+            mindful_integration::mindful_respond,
+            mindful_integration::mindful_quiet,
+            mindful_integration::get_mindful_settings,
+            mindful_integration::save_mindful_settings,
+            mindful_integration::mindful_preview,
             #[cfg(desktop)]
             updater::check_for_update,
             #[cfg(desktop)]
@@ -399,6 +407,7 @@ pub fn run() {
                 app.state::<sync_integration::SyncState>()
                     .stop
                     .store(true, std::sync::atomic::Ordering::Relaxed);
+                mindful_integration::stop(app);
             }
             #[cfg(target_os = "macos")]
             if matches!(&event, tauri::RunEvent::Exit) {

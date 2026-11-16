@@ -112,6 +112,11 @@ export function celebrate() {
 }
 
 /** Center of an element, for anchoring a burst. */
+/** A soft two-note bell for break reminders. */
+export function nudge() {
+  chime([880, 1320, 880], 0.16);
+}
+
 export function centerOf(el: Element | null | undefined): [number, number] {
   const r = el?.getBoundingClientRect();
   return r ? [r.left + r.width / 2, r.top + r.height / 2] : [innerWidth / 2, innerHeight / 2];
