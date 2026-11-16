@@ -1,14 +1,20 @@
-name: Build desktop app
+name: Release
 
-# Every push to main builds installers and attaches them to the workflow run.
-# Pushing a tag like v0.2.0 publishes them, plus the signed latest.json the
-# in-app updater reads, to a GitHub Release. The tag sets the app version.
+# Pushing a tag like v0.4.0 builds installers on macOS, Linux and Windows and
+# publishes them, plus the signed latest.json the in-app updater reads, to a
+# GitHub Release. The tag sets the app version. Checks run in ci.yml on every
+# PR, so release builds don't repeat them.
+#
+# Run this workflow manually to build test installers without publishing;
+# they are attached to the workflow run instead.
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -86,7 +92,9 @@ jobs:
           releaseDraft: false
           includeUpdaterJson: true
 
+      # Tag builds attach installers to the Release; only manual builds need artifacts.
       - name: Upload installers
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v5
         with:
           name: cadence-${{ matrix.name }}
