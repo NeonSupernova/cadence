@@ -1,0 +1,344 @@
+/* Cadence "mood light" theme: an aurora backdrop that follows your focus,
+   frosted panels over it, and color that carries meaning. Loaded last. */
+
+:root {
+  --display: 'Bricolage Grotesque Variable', ui-rounded, -apple-system, BlinkMacSystemFont, sans-serif;
+  --iris: #7c5cff; --lagoon: #14c8b0; --bubblegum: #ff5ca8; --mango: #ffb938; --sky: #3fa9ff;
+  --base: #eef0ff;
+  --blob-opacity: .3; --grain-opacity: .06;
+  --surface: rgba(255, 255, 255, .6);
+  --surface-strong: rgba(255, 255, 255, .84);
+  --glass-edge: rgba(255, 255, 255, .9);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, .85);
+  --glass-shadow: 0 18px 50px -22px rgba(52, 30, 140, .35), 0 2px 6px -2px rgba(52, 30, 140, .08);
+  --canvas: transparent;
+  --secondary: rgba(124, 92, 255, .08);
+  --line: rgba(64, 48, 140, .11);
+  --track: rgba(64, 48, 140, .08);
+  --ink: #1d1842; --muted: #555079; --faint: #736e93;
+  --accent: #6a49ff; --soft: rgba(124, 92, 255, .14);
+  --amber: #b07408; --red: #d4456b;
+  --glass: rgba(255, 255, 255, .55);
+  --blur: blur(24px) saturate(1.7);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --base: #16132e;
+    --blob-opacity: .38; --grain-opacity: .12;
+    --surface: rgba(36, 30, 78, .5);
+    --surface-strong: rgba(30, 25, 64, .88);
+    --glass-edge: rgba(255, 255, 255, .1);
+    --glass-shine: inset 0 1px 0 rgba(255, 255, 255, .09);
+    --glass-shadow: 0 20px 60px -24px rgba(0, 0, 0, .7), 0 2px 8px -2px rgba(0, 0, 0, .3);
+    --secondary: rgba(255, 255, 255, .06);
+    --line: rgba(255, 255, 255, .085);
+    --track: rgba(255, 255, 255, .07);
+    --ink: #f2efff; --muted: #b9b2dd; --faint: #8781ad;
+    --accent: #ab97ff; --soft: rgba(124, 92, 255, .24);
+    --amber: #ffc95c; --red: #ff86a6;
+    --glass: rgba(36, 30, 78, .5);
+  }
+}
+html[data-reduce-transparency=true] { --surface: var(--surface-strong); --blur: none; }
+html[data-increase-contrast=true] { --glass-edge: currentColor; }
+
+body { background: var(--base); font-feature-settings: 'ss01'; }
+::selection { background: color-mix(in srgb, var(--iris) 35%, transparent); }
+
+/* ---------- Type ---------- */
+h1, h2, .focus-title, .capacity-summary h2, .journal-summary strong, .live-clock, .learning-counts strong,
+.estimate-cell strong, .settings-head h3, .settings-nav h2, .tracked-detail > strong, .assessment-summary strong,
+.focus-card-control > strong, .brand span, .running-chip .live-clock {
+  font-family: var(--display); font-optical-sizing: auto;
+}
+h1 { font-size: 36px; font-weight: 700; letter-spacing: -1.4px; line-height: 1.1; margin-bottom: 8px; }
+h2 { font-weight: 650; letter-spacing: -.5px; }
+.section-kicker { font-size: 12px; letter-spacing: 0; font-weight: 600; color: var(--muted); text-transform: none; }
+.page-heading .eyebrow { font-size: 13px; letter-spacing: 0; color: var(--muted); margin-bottom: 6px; }
+.nav-label { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--faint); }
+
+/* ---------- Shell ---------- */
+.app-shell { position: relative; z-index: 1; background: transparent !important; gap: 0; }
+html[data-native-glass=true] .app-shell { background: transparent; }
+main { background: transparent; }
+.sidebar {
+  margin: 0; border-radius: 0; height: 100dvh; min-height: 0;
+  background: var(--surface) !important; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 0; border-right: 1px solid var(--glass-edge); box-shadow: 1px 0 0 var(--line), 12px 0 40px -28px rgba(30, 15, 90, .35);
+  padding-left: 10px; padding-right: 10px;
+}
+.app-shell { grid-template-columns: 200px minmax(0, 1fr); }
+.app-shell.with-drawer { grid-template-columns: 200px minmax(0, 1fr) 360px; }
+.brand { font-size: 17px; }
+.brand img { border-radius: 9px; box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--iris) 70%, transparent); }
+.capture-sidebar {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--iris) 16%, transparent), color-mix(in srgb, var(--bubblegum) 12%, transparent));
+  border: 1px solid color-mix(in srgb, var(--iris) 25%, transparent); border-radius: 12px; font-weight: 600; color: var(--ink);
+}
+.sidebar nav button { font-size: 13px; border-radius: 11px; padding: 9px 10px; position: relative; }
+.sidebar nav button:hover:not(.active) { background: var(--secondary); color: var(--ink); }
+.sidebar nav button.active {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--iris) 22%, transparent), color-mix(in srgb, var(--iris) 8%, transparent));
+  color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--iris) 30%, transparent);
+}
+.sidebar nav button.active > span { color: var(--iris); text-shadow: 0 0 10px var(--iris); }
+.utility { font-size: 12px; border-radius: 9px; }
+.utility:hover { background: var(--secondary); }
+.local-workspace { font-size: 10px; border-top-color: var(--line); }
+.online-dot { background: var(--lagoon); box-shadow: 0 0 6px var(--lagoon); }
+
+/* The top bar no longer repeats the page title; it's a quiet drag strip with actions. */
+.topbar { background: transparent; border-bottom: 0; height: 58px; padding: 0 30px; }
+.topbar > span { visibility: hidden; }
+.topbar button { font-size: 12px; color: var(--muted); border-radius: 10px; padding: 7px 10px; }
+.topbar button:hover:not(:disabled) { background: var(--secondary); color: var(--ink); }
+.chat-toggle { border: 1px solid var(--glass-edge); background: var(--surface); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.demo-pill { background: color-mix(in srgb, var(--mango) 25%, transparent); color: var(--amber); border-radius: 99px; padding: 4px 9px; }
+.main-content { padding: 4px 34px 40px; max-width: 1240px; }
+.page-heading { margin-bottom: 22px; align-items: center; }
+
+/* ---------- Glass panels ---------- */
+.capacity-summary, .focus-card, .rest-card, .task-panel, .deadline-alert, .week-planner, .capacity-settings,
+.learning-panel, .focus-journal, .day-panel, .journal-charts > section, .completion-feedback {
+  background: var(--surface); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-shine), var(--glass-shadow); border-radius: 20px;
+}
+.task-panel, .focus-journal { overflow: hidden; }
+.rest-card { border-style: solid; }
+
+/* ---------- Buttons ---------- */
+.primary-button {
+  position: relative; overflow: hidden; border-radius: 12px; padding: 10px 15px; font-weight: 600; font-size: 13px;
+  background: linear-gradient(135deg, #8a63ff, #6a49ff 55%, #c04dff); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 8px 22px -8px color-mix(in srgb, var(--iris) 80%, transparent);
+}
+.primary-button::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-120%);
+  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.45) 50%, transparent 65%);
+}
+.primary-button:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .7s ease; }
+.primary-button:hover:not(:disabled) { background: linear-gradient(135deg, #9673ff, #7656ff 55%, #cb5cff); color: #fff; }
+.primary-button:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+.secondary-button { border-radius: 12px; background: var(--surface); border: 1px solid var(--glass-edge); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--glass-shine); }
+.secondary-button:hover:not(:disabled) { background: var(--surface-strong); }
+input, select, textarea { border-radius: 10px; background: color-mix(in srgb, var(--surface-strong) 70%, transparent); border-color: var(--line); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--iris) 70%, transparent); outline-offset: 1px; }
+
+/* ---------- Today ---------- */
+.running-strip { padding: 0; margin-bottom: 16px; background: none; border: 0; box-shadow: none; display: flex; flex-direction: row; align-items: center; gap: 14px; flex-wrap: wrap; }
+.running-strip .section-kicker { margin: 0; }
+.running-strip .running-chips { margin: 0; }
+.running-chip { background: color-mix(in srgb, var(--hue) 14%, var(--surface)); border-color: color-mix(in srgb, var(--hue) 45%, transparent); box-shadow: 0 0 22px -6px color-mix(in srgb, var(--hue) 70%, transparent); }
+.day-panel { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(280px, 1.1fr); gap: 28px; align-items: center; padding: 22px 26px; margin-bottom: 18px; }
+.day-panel .day-copy h2 { font-size: 30px; font-weight: 700; letter-spacing: -1px; margin: 6px 0 6px; font-variant-numeric: tabular-nums; }
+.day-panel .day-copy h2 small { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--muted); }
+.day-panel .day-copy p { font-size: 12px; margin: 0 0 14px; }
+.day-panel .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.day-panel .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.legend .l-done { background: linear-gradient(to top, var(--lagoon), var(--iris)); }
+.legend .l-plan { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--iris) 55%, transparent) 0 2px, transparent 2px 4px); }
+.legend .l-cap { background: color-mix(in srgb, var(--iris) 18%, transparent); }
+.today-checkin { background: var(--surface); backdrop-filter: var(--blur); border: 1px solid var(--glass-edge); border-radius: 18px; margin: -6px 0 18px; }
+
+.deadline-alert { border-left: 0; border-radius: 20px; padding: 16px 20px 16px 22px; position: relative; overflow: hidden; }
+.deadline-alert::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: linear-gradient(var(--mango), var(--bubblegum)); }
+.deadline-alert > strong { color: var(--amber); font-family: var(--display); font-size: 15px; }
+
+/* The hero: what you're doing now. It takes on the task's color. */
+.focus-card {
+  --hue: var(--iris);
+  position: relative; overflow: hidden; border-radius: 28px; padding: 28px 30px; gap: 30px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--hue) 22%, var(--surface)), var(--surface) 60%);
+  border-color: color-mix(in srgb, var(--hue) 35%, var(--glass-edge));
+}
+.focus-card::before {
+  content: ''; position: absolute; width: 380px; height: 380px; right: -120px; top: -180px; border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--hue) 55%, transparent), transparent); pointer-events: none;
+}
+.focus-card.running .focus-card-control > .live-clock { color: var(--hue); text-shadow: 0 0 24px color-mix(in srgb, var(--hue) 60%, transparent); }
+.focus-title { font-size: 28px; font-weight: 700; letter-spacing: -.9px; line-height: 1.2; }
+.focus-card-control { border-left-color: var(--line); min-width: 170px; position: relative; }
+.focus-card-control > strong { font-size: 38px; font-weight: 650; letter-spacing: -1.2px; }
+.focus-card-control .live-clock { font-size: 40px; }
+.work-tags > span, .label-pill { border-radius: 99px; padding: 4px 10px; background: var(--secondary); font-size: 11px; }
+.work-tags .provisional { background: color-mix(in srgb, var(--mango) 22%, transparent); color: var(--amber); }
+
+/* ---------- Task list ---------- */
+.task-toolbar, .filter-row { border-bottom-color: var(--line); }
+.task-toolbar h2 { font-family: var(--display); font-size: 17px; }
+th { background: transparent; color: var(--faint); font-size: 11px; font-weight: 600; padding: 10px 18px; border-bottom-color: var(--line); }
+td { padding: 13px 18px; border-bottom-color: var(--line); }
+tbody tr { --hue: var(--iris); transition: background .15s; }
+tbody tr td:first-child { box-shadow: inset 4px 0 0 -1px color-mix(in srgb, var(--hue) 75%, transparent); }
+tbody tr:hover { background: color-mix(in srgb, var(--hue) 7%, transparent); }
+tr.selected-row { background: color-mix(in srgb, var(--hue) 12%, transparent); }
+tr.running-row td:first-child { box-shadow: inset 5px 0 0 -1px var(--hue), inset 30px 0 30px -30px color-mix(in srgb, var(--hue) 60%, transparent); }
+.task-title { font-size: 14px; font-weight: 600; }
+.task-meta { margin-top: 4px; }
+.estimate-cell strong { font-size: 15px; font-weight: 650; }
+.estimate-cell small { color: var(--amber); display: inline-flex; align-items: center; gap: 4px; font-size: 0; }
+.estimate-cell small::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--mango); box-shadow: 0 0 6px var(--mango); }
+.row-actions button { border-radius: 9px; width: 30px; }
+.row-actions button:hover { background: color-mix(in srgb, var(--hue) 16%, transparent); color: var(--ink); }
+.table-tools .search { border-radius: 99px; padding-left: 14px; }
+.model-note { padding-left: 4px; }
+
+/* ---------- Journal ---------- */
+.journal-charts { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+.journal-charts > section { padding: 20px 22px; }
+.journal-charts > section.wide { grid-column: 1 / -1; }
+.journal-charts h3 { font-family: var(--display); font-size: 15px; font-weight: 650; margin: 0 0 14px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.journal-charts h3 small { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 500; font-size: 11px; color: var(--muted); }
+.journal-summary strong { font-size: 40px; font-weight: 700; letter-spacing: -1.4px; background: linear-gradient(100deg, var(--lagoon), var(--iris) 55%, var(--bubblegum)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.journal-entry { border-bottom-color: var(--line); border-radius: 0; position: relative; }
+.journal-entry::before { content: ''; width: 10px; height: 10px; border-radius: 4px; background: var(--hue, var(--iris)); box-shadow: 0 0 8px var(--hue, var(--iris)); flex: none; }
+.journal-entry:hover { background: color-mix(in srgb, var(--hue, var(--iris)) 7%, transparent); }
+
+/* ---------- Week ---------- */
+.week-blocks > button { border-radius: 10px; background: color-mix(in srgb, var(--hue, var(--iris)) 14%, transparent); box-shadow: inset 3px 0 0 var(--hue, var(--iris)); }
+.weight-list > div > div > span { background: linear-gradient(90deg, var(--iris), var(--bubblegum)); }
+.capacity-bar .spent { background: linear-gradient(90deg, var(--lagoon), var(--iris)); }
+.capacity-bar .planned { background: color-mix(in srgb, var(--iris) 40%, transparent); }
+
+/* ---------- Drawers, cards, modals ---------- */
+.inspector, .chat-panel { background: var(--surface-strong); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border-left-color: var(--glass-edge); }
+.task-card.inspector { border-radius: 26px; border-color: var(--glass-edge); box-shadow: var(--glass-shine), 0 40px 120px -30px rgba(20, 10, 70, .55); }
+.modal-backdrop, .task-card-backdrop { background: color-mix(in srgb, var(--base) 45%, transparent) !important; backdrop-filter: blur(10px) saturate(1.2); }
+.settings-modal { background: var(--surface-strong); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border-color: var(--glass-edge); border-radius: 24px; }
+.settings-nav { background: color-mix(in srgb, var(--iris) 6%, transparent); border-right-color: var(--line); }
+.settings-nav button.chosen { background: color-mix(in srgb, var(--iris) 18%, transparent); color: var(--ink); }
+.settings-nav button.chosen > span { color: var(--iris); }
+.message.user .message-content { background: linear-gradient(135deg, color-mix(in srgb, var(--iris) 22%, transparent), color-mix(in srgb, var(--bubblegum) 14%, transparent)); color: var(--ink); }
+.composer { border-radius: 16px; background: var(--surface); }
+.send-button { border-radius: 10px; background: linear-gradient(135deg, #8a63ff, #c04dff); }
+.notice { background: color-mix(in srgb, var(--lagoon) 14%, var(--surface)); border-color: color-mix(in srgb, var(--lagoon) 35%, transparent); color: var(--ink); border-radius: 14px; backdrop-filter: var(--blur); }
+.error-banner { border-radius: 14px; }
+.quick-capture-window { background: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--iris) 25%, var(--base)), var(--base) 60%); }
+
+@media (max-width: 1080px) { .day-panel { grid-template-columns: auto minmax(0, 1fr); } .day-panel > div:last-child { grid-column: 1 / -1; } .journal-charts { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .sidebar { display: none; } .main-content { padding: 4px 16px 32px; } h1 { font-size: 28px; } }
+.settings-nav-label { text-transform: none; letter-spacing: 0; font-size: 11px; }
+
+/* ---------- Sparkle ---------- */
+/* A tiny twinkle orbits the dot of every live timer. */
+.running-chip .pulse-dot { position: relative; overflow: visible; }
+.running-chip .pulse-dot::after {
+  content: '✦'; position: absolute; left: 50%; top: 50%; width: 0; height: 0; font-size: 8px; line-height: 0;
+  color: #fff; text-shadow: 0 0 6px var(--hue), 0 0 2px #fff; animation: orbit 3.2s linear infinite; transform-origin: 0 0;
+}
+.running-chip .pulse-dot { margin-right: 3px; }
+@keyframes orbit { from { transform: rotate(0deg) translateX(7px) rotate(0deg) scale(.8); } 50% { transform: rotate(180deg) translateX(7px) rotate(-180deg) scale(1.2); } to { transform: rotate(360deg) translateX(7px) rotate(-360deg) scale(.8); } }
+
+/* While the hero task runs, a shimmer runs along its bottom edge. */
+.focus-card.running::after {
+  content: ''; position: absolute; left: 24px; right: 24px; bottom: 0; height: 3px; border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--hue) 20%, #fff 50%, var(--hue) 80%, transparent);
+  background-size: 200% 100%; animation: edge 2.8s linear infinite; opacity: .85;
+}
+@keyframes edge { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Sparkles on the primary actions when hovered. */
+.primary-button:hover:not(:disabled) { box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 10px 28px -8px color-mix(in srgb, var(--bubblegum) 70%, transparent); }
+
+/* Done steps get a little starburst as they check. */
+.step-list li.popped .step-check { box-shadow: 0 0 0 6px color-mix(in srgb, var(--lagoon) 25%, transparent), 0 0 20px var(--lagoon); }
+
+/* One entrance when a screen opens: panels rise in, in order. */
+.main-content > :is(section, .day-panel, .journal-charts, .running-strip, .task-panel, .model-note) { animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+.main-content > :nth-child(3) { animation-delay: .04s; } .main-content > :nth-child(4) { animation-delay: .08s; }
+.main-content > :nth-child(5) { animation-delay: .12s; } .main-content > :nth-child(6) { animation-delay: .16s; }
+.main-content > :nth-child(7) { animation-delay: .2s; } .main-content > :nth-child(n+8) { animation-delay: .24s; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.995); } }
+
+/* The ring's tip glints. */
+.day-ring .tip { animation: glint 2.4s ease-in-out infinite; }
+@keyframes glint { 50% { filter: drop-shadow(0 0 10px var(--bubblegum)) drop-shadow(0 0 3px #fff); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .running-chip .pulse-dot::after, .focus-card.running::after, .main-content > *, .day-ring .tip { animation: none !important; }
+}
+
+/* Capacity week rows: a meter per day instead of a sentence. */
+.week-day { grid-template-columns: 110px 200px 1fr; padding: 14px 0; align-items: center; border-bottom-color: var(--line); }
+.week-day strong { font-family: var(--display); font-size: 14px; }
+.day-meter { position: relative; display: block; height: 8px; border-radius: 99px; background: var(--track); overflow: hidden; margin: 7px 0 0; }
+.day-meter > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; }
+.m-plan { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--iris) 50%, transparent) 0 4px, color-mix(in srgb, var(--iris) 28%, transparent) 4px 8px); }
+.m-done { background: linear-gradient(90deg, var(--lagoon), var(--iris)); z-index: 1; }
+.day-meter-cell small { white-space: nowrap; }
+.week-blocks > span { color: var(--faint); font-style: italic; }
+
+/* ---------- AI: Siri-style rainbow ----------
+   Everything the assistant touches wears a soft rainbow edge. It drifts slowly
+   at rest and spins up while the assistant is working. */
+@property --ai-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+:root { --ai-spectrum: #3fa9ff, #7c5cff, #d65cff, #ff5ca8, #ff8a4c, #ffd84a, #3ddcb4, #3fa9ff; }
+.ai-edge { position: relative; isolation: isolate; }
+.ai-edge::before, .ai-edge::after {
+  content: ''; position: absolute; inset: -1.5px; border-radius: inherit; pointer-events: none;
+  background: conic-gradient(from var(--ai-angle), var(--ai-spectrum));
+  animation: ai-spin 7s linear infinite;
+}
+.ai-edge::before {
+  padding: 1.5px; z-index: 2;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.ai-edge::after { z-index: -1; inset: -3px; filter: blur(12px); opacity: .32; transition: opacity .3s; }
+.ai-edge:hover::after, .ai-edge:focus-within::after { opacity: .55; }
+.ai-edge.active::before, .ai-edge.active::after { animation-duration: 1.4s; }
+.ai-edge.active::after { opacity: .9; filter: blur(16px); }
+@keyframes ai-spin { to { --ai-angle: 360deg; } }
+
+.capture-sidebar.ai-edge { background: var(--surface); border-color: transparent; }
+.composer.ai-edge { border-color: transparent; }
+.composer.ai-edge:focus-within { box-shadow: none; }
+.breakdown-button.ai-edge { border: 0; }
+
+/* Capture writes the task with AI, so its button is the spectrum itself. */
+.primary-button.ai-button {
+  background: linear-gradient(110deg, #3fa9ff, #7c5cff 30%, #d65cff 50%, #ff5ca8 70%, #ff8a4c) 0 0 / 200% 100%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 8px 24px -8px rgba(214, 92, 255, .8);
+  transition: background-position .6s ease;
+}
+.primary-button.ai-button:hover:not(:disabled) { background: linear-gradient(110deg, #3fa9ff, #7c5cff 30%, #d65cff 50%, #ff5ca8 70%, #ff8a4c) 100% 0 / 200% 100%; }
+
+/* The chat drawer: a rainbow seam on its inner edge that glows while thinking. */
+.chat-panel.ai-panel { position: relative; border-left: 0; }
+.chat-panel.ai-panel::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; z-index: 3;
+  background: linear-gradient(180deg, var(--ai-spectrum)); background-size: 100% 300%; animation: ai-seam 8s linear infinite;
+}
+.chat-panel.ai-panel.active::before { width: 3px; box-shadow: 0 0 18px rgba(214, 92, 255, .8); animation-duration: 1.6s; }
+@keyframes ai-seam { to { background-position: 0 300%; } }
+
+/* The assistant's presence: a small glowing orb. */
+.ai-orb { display: block; width: 46px; height: 46px; border-radius: 50%; margin-bottom: 16px;
+  background: conic-gradient(from var(--ai-angle), var(--ai-spectrum)); animation: ai-spin 5s linear infinite;
+  -webkit-mask: radial-gradient(circle, #000 52%, transparent 72%); mask: radial-gradient(circle, #000 52%, transparent 72%);
+  filter: saturate(1.2) blur(.4px); box-shadow: 0 0 30px rgba(124, 92, 255, .6); }
+.ai-orb.small { width: 18px; height: 18px; margin: 0; animation-duration: 1.2s; flex: none; }
+.chat-welcome h2 { font-family: var(--display); font-size: 24px; font-weight: 700; letter-spacing: -.7px; }
+.chat-ideas { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin-top: 4px; }
+.ai-chip { font-size: 12px; text-align: left; padding: 8px 12px; border-radius: 12px; background: var(--secondary); border: 1px solid var(--line); color: var(--ink); transition: background .15s, border-color .15s, transform .15s; }
+.ai-chip:hover:not(:disabled) { background: color-mix(in srgb, var(--iris) 14%, transparent); border-color: color-mix(in srgb, #d65cff 45%, transparent); color: var(--ink); transform: translateX(2px); }
+.ai-thinking { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: linear-gradient(90deg, var(--muted), var(--ink), var(--muted)) 0 0 / 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ai-text 2s linear infinite; }
+.ai-thinking p { flex-basis: 100%; color: var(--muted); }
+@keyframes ai-text { to { background-position: -200% 0; } }
+.chat-error { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; font-size: 12px; line-height: 1.6; padding: 11px 13px; border-radius: 12px; margin-bottom: 16px;
+  background: color-mix(in srgb, var(--red) 12%, transparent); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); color: var(--ink); }
+.chat-error > span { flex: 1; min-width: 0; }
+.chat-error button { font-size: 12px; color: var(--accent); }
+.chat-error button[aria-label] { font-size: 16px; color: var(--muted); }
+.chat-header strong { font-family: var(--display); font-size: 15px; }
+.quick-capture-window .capture-form { border-radius: 14px; }
+.quick-capture-window .capture-form textarea { border-color: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-edge::before, .ai-edge::after, .ai-orb, .chat-panel.ai-panel::before, .ai-thinking, .primary-button.ai-button { animation: none !important; transition: none; }
+}
+html[data-reduce-motion=true] :is(.ai-edge::before, .ai-edge::after, .ai-orb, .chat-panel.ai-panel::before, .ai-thinking) { animation: none !important; }
+.breakdown-button.ai-edge { overflow: visible; }
+.composer.ai-edge { background: var(--surface-strong); }
+.capture-sidebar.ai-edge { background: var(--surface-strong); }

@@ -35,7 +35,7 @@
 <svelte:head><title>Quick Capture — Cadence</title></svelte:head>
 <main class="quick-capture-window">
   <header><img src="/favicon.png" alt="" /><strong>Quick Capture</strong><span>INBOX FOR YOUR ATTENTION</span></header>
-  <form onsubmit={e => { e.preventDefault(); capture(); }}>
+  <form class="ai-edge capture-form" class:active={busy} onsubmit={e => { e.preventDefault(); capture(); }}>
     <textarea bind:this={field} bind:value={input} maxlength="19000" rows="3" aria-label="Task to capture" placeholder="What needs doing? Include a deadline if there is one." disabled={busy} onkeydown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); capture(); } }}></textarea>
     <footer><span>{busy ? phase : 'Enter to capture · Esc to dismiss'}</span><button class="primary-button" disabled={busy || !input.trim() || !desktop()}>{busy ? 'Adding…' : 'Capture task'} <span>↵</span></button></footer>
   </form>
