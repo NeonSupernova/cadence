@@ -240,6 +240,9 @@
     if(browserPreview){error='Open the desktop app to follow saved references.';return;}
     try{await invoke('open_task_reference',{request:request(),id,index});}catch(e){error=String(e);}
   }
+  // macOS gets these shortcuts from the native menu; elsewhere the page handles them.
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  const mod = isMac ? '⌘' : 'Ctrl+';
   function createGuided(){selectedId=null;compose('Walk me through creating a task.');}
   function inspect(id:number) { selectedId=id; chatOpen=false; }
   function openChat() { chatOpen=true; tick().then(()=>composer?.focus()); }
@@ -538,7 +541,16 @@
         if (!busy) refresh();
       }),
     ]) pending.then(fn => disposed ? fn() : nativeListeners.push(fn));
-    const shortcut = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key === 'k') { event.preventDefault(); openChat(); } };
+    const shortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') { event.preventDefault(); openChat(); return; }
+      if (isMac && desktop()) return;
+      if (key === '1') { event.preventDefault(); screen = 'now'; }
+      else if (key === '2') { event.preventDefault(); navigate('open'); }
+      else if (key === '3') { event.preventDefault(); screen = 'journal'; }
+      else if (key === 'n') { event.preventDefault(); createGuided(); }
+    };
     window.addEventListener('keydown', shortcut);
     return () => { window.clearInterval(timerTick); window.clearInterval(capacityPoll); nativeListeners.forEach(fn => fn()); window.removeEventListener('focus', onFocus); disposed = true; unlisten?.(); window.removeEventListener('keydown', shortcut); };
   });
@@ -550,12 +562,12 @@
 <div class="app-shell" class:with-drawer={chatOpen}>
   <aside class="sidebar">
     <button class="brand" onclick={() => screen='now'}><img src="/favicon.png" alt="" /><span>Cadence</span></button>
-    <button class="capture-sidebar ai-edge" onclick={createGuided}>＋ <span>Create with chat</span><kbd>⌘N</kbd></button>
+    <button class="capture-sidebar ai-edge" onclick={createGuided}>＋ <span>Create with chat</span><kbd>{mod}N</kbd></button>
     <nav aria-label="Workspace">
-      <button class:active={screen==='now'} onclick={() => screen='now'}><span>◉</span>Today<kbd>⌘1</kbd></button>
-      <button class:active={screen==='next'} onclick={() => navigate('open')}><span>▤</span>All tasks<kbd>⌘2</kbd></button>
+      <button class:active={screen==='now'} onclick={() => screen='now'}><span>◉</span>Today<kbd>{mod}1</kbd></button>
+      <button class:active={screen==='next'} onclick={() => navigate('open')}><span>▤</span>All tasks<kbd>{mod}2</kbd></button>
       <button class:active={screen==='week'} onclick={() => screen='week'}><span>▦</span>Capacity</button>
-      <button class:active={screen==='journal'} onclick={() => screen='journal'}><span>◷</span>Focus journal<kbd>⌘3</kbd></button>
+      <button class:active={screen==='journal'} onclick={() => screen='journal'}><span>◷</span>Focus journal<kbd>{mod}3</kbd></button>
     </nav>
     <div class="nav-label">Connected</div>
     <div class="canvas-sidebar"><button disabled={busy} onclick={showCanvas}><span class="canvas-glyph">◉</span><span>Canvas<small>{canvasBusy?'Syncing…':canvas.error?'Needs attention':canvas.configured?`${canvasCount} remaining`:'Connect courses'}</small></span></button><button disabled={canvasBusy||browserPreview} onclick={syncCanvas} aria-label="Sync Canvas">↻</button></div>
@@ -563,7 +575,7 @@
     <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={() => openSettings('focus')}>⚙ Settings</button>{#if syncStatus?.enabled}<button class="local-workspace sync-line" class:sync-problem={Boolean(syncStatus.error)} onclick={()=>openSettings('sync')} title={syncStatus.error || `Last synced ${ago(syncStatus.lastSyncedAt)}`}><span class="online-dot"></span>{syncStatus.error ? 'Sync needs attention' : `Synced via ${providerOf(syncStatus.folder)}`}<small>{syncStatus.error ? 'Open sync settings' : `${syncStatus.devices.length} other device${syncStatus.devices.length===1?'':'s'} · ${ago(syncStatus.lastSyncedAt)}`}</small></button>{:else}<div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div>{/if}</div>
   </aside>
   <main>
-    <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>⌘K</kbd></button></div></header>
+    <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>{mod}K</kbd></button></div></header>
     <div class="main-content">
       <div class="page-heading"><div><p class="eyebrow">{new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</p><h1>{screen==='now'?'A plan that fits your day':screen==='week'?'Your week, at your pace':screen==='journal'?'Your focus journal':title}</h1><p>{screen==='now'?'Time and effort are both limited. This plan respects both.':screen==='week'?'Start with your schedule. Let real work refine it.':screen==='journal'?'Recorded work, session by session.':'Inspect an estimate, adjust it, or start a focused block.'}</p></div><button class="primary-button ai-button" onclick={captureWindow}>＋ Capture</button></div>
       {#if error}<div class="error-banner" role="alert">{error}<button onclick={() => error=''} aria-label="Dismiss error">×</button></div>{/if}
@@ -647,7 +659,7 @@
 </div>
 
 {#if settingsOpen}
-  <div class="modal-backdrop" role="presentation" onkeydown={e => { if (e.key === 'Escape') settingsOpen = false; }}><div class="settings-modal settings-shell" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+  <div class="modal-backdrop" role="presentation" onkeydown={e => { if (e.key === 'Escape') settingsOpen = false; }}><div class="settings-modal settings-shell" use:focusCard role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
     <nav class="settings-nav" aria-label="Settings sections">
       <h2 id="settings-title">Settings</h2>
       {#each settingsGroups as group (group.label)}

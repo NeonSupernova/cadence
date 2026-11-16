@@ -15,7 +15,7 @@
   --secondary: rgba(124, 92, 255, .08);
   --line: rgba(64, 48, 140, .11);
   --track: rgba(64, 48, 140, .08);
-  --ink: #1d1842; --muted: #5c5784; --faint: #8f8aad;
+  --ink: #1d1842; --muted: #555079; --faint: #736e93;
   --accent: #6a49ff; --soft: rgba(124, 92, 255, .14);
   --amber: #b07408; --red: #d4456b;
   --glass: rgba(255, 255, 255, .55);
@@ -62,9 +62,9 @@ h2 { font-weight: 650; letter-spacing: -.5px; }
 html[data-native-glass=true] .app-shell { background: transparent; }
 main { background: transparent; }
 .sidebar {
-  margin: 10px 0 10px 10px; border-radius: 22px; height: calc(100dvh - 20px); min-height: 0;
+  margin: 0; border-radius: 0; height: 100dvh; min-height: 0;
   background: var(--surface) !important; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  border: 1px solid var(--glass-edge); box-shadow: var(--glass-shine), var(--glass-shadow);
+  border: 0; border-right: 1px solid var(--glass-edge); box-shadow: 1px 0 0 var(--line), 12px 0 40px -28px rgba(30, 15, 90, .35);
   padding-left: 10px; padding-right: 10px;
 }
 .app-shell { grid-template-columns: 200px minmax(0, 1fr); }
@@ -226,7 +226,8 @@ tr.running-row td:first-child { box-shadow: inset 5px 0 0 -1px var(--hue), inset
   content: '✦'; position: absolute; left: 50%; top: 50%; width: 0; height: 0; font-size: 8px; line-height: 0;
   color: #fff; text-shadow: 0 0 6px var(--hue), 0 0 2px #fff; animation: orbit 3.2s linear infinite; transform-origin: 0 0;
 }
-@keyframes orbit { from { transform: rotate(0deg) translateX(9px) rotate(0deg) scale(.8); } 50% { transform: rotate(180deg) translateX(9px) rotate(-180deg) scale(1.2); } to { transform: rotate(360deg) translateX(9px) rotate(-360deg) scale(.8); } }
+.running-chip .pulse-dot { margin-right: 3px; }
+@keyframes orbit { from { transform: rotate(0deg) translateX(7px) rotate(0deg) scale(.8); } 50% { transform: rotate(180deg) translateX(7px) rotate(-180deg) scale(1.2); } to { transform: rotate(360deg) translateX(7px) rotate(-360deg) scale(.8); } }
 
 /* While the hero task runs, a shimmer runs along its bottom edge. */
 .focus-card.running::after {

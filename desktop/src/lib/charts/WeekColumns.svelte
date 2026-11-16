@@ -17,7 +17,7 @@
         <span class="plan" style={`height:${(Math.min(plannedOf(d), d.capacityUnits) / max) * 100}%`}></span>
         <span class="done" style={`height:${(d.spentUnits / max) * 100}%`}></span>
       </span>
-      <span class="day">{new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'narrow' })}</span>
+      <span class="day">{new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' })}</span>
       <span class="num">{fmt(d.capacityUnits)}</span>
     </button>
   {/each}

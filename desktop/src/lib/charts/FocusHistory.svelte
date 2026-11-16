@@ -18,7 +18,7 @@
     {/each}
   </div>
   <div class="labels" aria-hidden="true">
-    {#each days as d (d.date)}<span class:chosen={d.date === selected}>{new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'narrow' })}</span>{/each}
+    {#each days as d, i (d.date)}<span class:chosen={d.date === selected}>{i === days.length - 1 ? 'Today' : new Date(d.date + 'T12:00:00').getDate()}</span>{/each}
   </div>
 </div>
 
@@ -31,7 +31,7 @@
   .bar:hover .fill b, .chosen .fill b { opacity: 1; }
   .chosen .fill { background: linear-gradient(to top, var(--lagoon), var(--iris) 60%, var(--bubblegum)); box-shadow: 0 0 18px color-mix(in srgb, var(--iris) 50%, transparent); }
   .avg { position: absolute; left: 0; right: 0; border-top: 1.5px dashed color-mix(in srgb, var(--ink) 25%, transparent); pointer-events: none; z-index: 1; }
-  .avg em { position: absolute; right: 0; bottom: 2px; font-style: normal; font-size: 9px; color: var(--faint); }
+  .avg em { position: absolute; left: 0; bottom: 2px; font-style: normal; font-size: 9px; color: var(--faint); }
   .labels { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
   .labels span { text-align: center; font-size: 10px; color: var(--faint); }
   .labels .chosen { color: var(--iris); font-weight: 700; }
