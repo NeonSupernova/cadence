@@ -40,3 +40,4 @@ export type Subtask = { title: string; done: boolean; doneAt: string | null };
 export type TimerSettings = { multiple: boolean; capMinutes: number };
 export const defaultTimer = (): TimerSettings => ({ multiple: true, capMinutes: 240 });
 export type SyncStatus = { enabled: boolean; folder: string | null; deviceName: string; providers: { name: string; path: string }[]; lastSyncedAt: string | null; devices: { name: string; exportedAt: string; tasks: number }[]; report: { created: number; updated: number; skipped: number } | null; warnings: string[]; error: string | null };
+export type UpdateCheck = { currentVersion: string; available: string | null; notes: string | null; date: string | null; canInstall: boolean };

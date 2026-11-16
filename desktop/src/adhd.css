@@ -80,3 +80,11 @@
 .sync-line.sync-problem .online-dot{background:var(--amber)}
 .sync-report small{display:block}
 .sync-warning{color:var(--amber)}
+
+/* Updates */
+.update-status{display:flex;flex-direction:column;gap:4px}
+.update-notes{margin:6px 0 0;white-space:pre-wrap;color:var(--muted);max-height:140px;overflow:auto;font-size:12px}
+.update-bar{height:6px;border-radius:4px;background:var(--secondary);overflow:hidden;margin:6px 0 2px}
+.update-bar>span{display:block;height:100%;background:var(--steps-grad);transition:width .3s}
+.update-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+.update-actions .save-settings{flex:1}
