@@ -10,9 +10,9 @@ bun install
 bun run launch
 ```
 
-It opens into Today / All tasks / Capacity / Focus Journal, with native Mac menus, a menu bar timer, Quick Capture, chat-driven task management, stable `TASK-001` references, task details, custom labels, deadlines, personal fit sorting, persistent task timers, system theme and native macOS materials, progress statistics, restorable Trash, and an isolated demo workspace. Your root `.env` is read at runtime, or you can configure OpenRouter in Settings. Canvas assignments can be synced with a personal token in Settings → Canvas; they are automatically labeled `canvas`. Personal workload estimates and a seven-day plan start with 2 hours on weekdays and 1 hour on weekends, then adapt using tracked work and explicit feedback; see [the workload model](desktop/WORKLOAD.md).
+It opens into Today / All tasks / Capacity / Focus Journal, with native Mac menus, a menu bar timer, Quick Capture, chat-driven task management, stable `TASK-001` references, task details, custom labels, deadlines, personal fit sorting, persistent task timers (several at once, with an automatic cutoff), AI step breakdowns with celebratory feedback, iCloud/OneDrive folder sync between devices, system theme and native macOS materials, progress statistics, restorable Trash, and an isolated demo workspace. Your root `.env` is read at runtime, or you can configure OpenRouter in Settings. Canvas assignments can be synced with a personal token in Settings → Canvas; they are automatically labeled `canvas`. Personal workload estimates and a seven-day plan start with 2 hours on weekdays and 1 hour on weekends, then adapt using tracked work and explicit feedback; see [the workload model](desktop/WORKLOAD.md).
 
-The frontend production build, Svelte checks, forty-four Rust tests, and strict Clippy pass. Native Rust compilation now passes with cached dependencies. GUI launch/visual checks require a normal desktop session. See the [desktop README](desktop/README.md) for details.
+The frontend production build, Svelte checks, sixty Rust tests, and strict Clippy pass. Native Rust compilation now passes with cached dependencies. GUI launch/visual checks require a normal desktop session. See the [desktop README](desktop/README.md) for details.
 
 ## Console prototype
 

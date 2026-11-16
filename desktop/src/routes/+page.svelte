@@ -2,13 +2,36 @@
   import { onMount, tick } from 'svelte';
   import { invoke, desktop, progress, listen } from '$lib/bridge';
   import { preview } from '$lib/preview';
-  import { defaultView, reference } from '$lib/types';
-  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization } from '$lib/types';
+  import { defaultView, reference, defaultTimer } from '$lib/types';
+  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization, TimerSettings, SyncStatus } from '$lib/types';
+  import { burst, allSteps, celebrate, centerOf, soundsEnabled, setSoundsEnabled } from '$lib/celebrate';
+  import { fly, scale } from 'svelte/transition';
 
   let data = $state<Snapshot | null>(null);
   let clock = $state(Date.now());
-  let running = $derived(data?.tasks.find(t => !t.deleted && t.timerStartedAt));
-  const elapsed = (task: Task) => (task.trackedMs || 0) + (task.timerStartedAt ? Math.max(0, clock - Date.parse(task.timerStartedAt)) : 0);
+  let runningTasks = $derived((data?.tasks || []).filter(t => !t.deleted && t.timerStartedAt).sort((a, b) => (b.timerStartedAt || '').localeCompare(a.timerStartedAt || '')));
+  let running = $derived(runningTasks[0]);
+  let timer = $derived<TimerSettings>(data?.timer || defaultTimer());
+  const capMs = () => timer.capMinutes > 0 ? timer.capMinutes * 60000 : Infinity;
+  // The live session never displays past the cutoff; the backend stops it there.
+  const liveMs = (task: Task) => task.timerStartedAt ? Math.min(capMs(), Math.max(0, clock - Date.parse(task.timerStartedAt))) : 0;
+  const elapsed = (task: Task) => (task.trackedMs || 0) + liveMs(task);
+  const cutoffLeft = (task: Task) => task.timerStartedAt && timer.capMinutes > 0 ? capMs() - liveMs(task) : Infinity;
+  const capLabel = (m: number) => m === 0 ? 'Off' : m % 60 === 0 ? `${m / 60} hour${m === 60 ? '' : 's'}` : `${m} minutes`;
+  // A stable color per task makes concurrent timers easy to tell apart.
+  const hues = ['#5364d9', '#22b07d', '#e0912f', '#d6578a', '#2fa8d6', '#8a63e6'];
+  const taskHue = (id: number) => hues[id % hues.length];
+  const steps = (task: Task) => task.subtasks || [];
+  const stepsDone = (task: Task) => steps(task).filter(s => s.done).length;
+  const stepPercent = (task: Task) => steps(task).length ? Math.round(stepsDone(task) / steps(task).length * 100) : 0;
+  let stepDraft = $state('');
+  let breakdownBusy = $state(false);
+  let allDoneTaskId = $state<number | null>(null);
+  let poppedStep = $state('');
+  let freshSteps = $state(0);
+  let timerDraft = $state<TimerSettings>(defaultTimer());
+  let soundsDraft = $state(true);
+  let timerSaving = $state(false);
   const duration = (ms: number) => { const sec = Math.floor(ms / 1000); return `${Math.floor(sec / 3600)}:${String(Math.floor(sec / 60) % 60).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`; };
   let totalTracked = $derived(data?.tasks.filter(t => !t.deleted).reduce((sum, task) => sum + elapsed(task), 0) || 0);
   let todayTracked = $derived.by(() => {
@@ -36,7 +59,31 @@
   let demo = $state(false);
   let browserPreview = $state(false);
   let settingsOpen = $state(false);
-  let settingsTab = $state<'assistant' | 'canvas'>('assistant');
+  let settingsTab = $state<'assistant' | 'canvas' | 'focus' | 'sync'>('assistant');
+  let syncStatus = $state<SyncStatus | null>(null);
+  let syncFolder = $state('');
+  let syncDevice = $state('');
+  let syncEnabled = $state(false);
+  let syncBusy = $state(false);
+  let syncError = $state('');
+  const providerOf = (folder: string | null | undefined) => folder ? (syncStatus?.providers.filter(p => folder === p.path || folder.startsWith(p.path + '/') || folder.startsWith(p.path + '\\')).sort((a, b) => b.path.length - a.path.length)[0]?.name || 'a synced folder') : '';
+  const ago = (iso: string | null | undefined) => { if (!iso) return 'never'; const s = Math.max(0, Math.round((clock - Date.parse(iso)) / 1000)); return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago` : new Date(iso).toLocaleDateString(); };
+  async function loadSync() { if (browserPreview) return; try { syncStatus = await invoke<SyncStatus>('get_sync_settings'); } catch (e) { syncError = String(e); } }
+  function syncForm() { syncFolder = syncStatus?.folder || ''; syncDevice = syncStatus?.deviceName || ''; syncEnabled = syncStatus?.enabled ?? false; syncError = ''; }
+  async function saveSync() {
+    if (browserPreview) { syncError = 'Open the desktop app to set up sync.'; return; }
+    syncBusy = true; syncError = '';
+    try { syncStatus = await invoke<SyncStatus>('save_sync_settings', { enabled: syncEnabled, folder: syncFolder || null, deviceName: syncDevice }); syncForm(); if (syncEnabled) await refresh(); }
+    catch (e) { syncError = String(e); await loadSync(); }
+    finally { syncBusy = false; }
+  }
+  async function syncNow() {
+    if (browserPreview || syncBusy) return;
+    syncBusy = true; syncError = '';
+    try { syncStatus = await invoke<SyncStatus>('sync_now'); await refresh(); }
+    catch (e) { syncError = String(e); await loadSync(); }
+    finally { syncBusy = false; }
+  }
   let canvas = $state<CanvasSettings>({ baseUrl: 'https://pcci.instructure.com', configured: false, autoSync: true, report: null, error: null });
   let canvasFormUrl = $state('https://pcci.instructure.com');
   let canvasFormToken = $state('');
@@ -259,10 +306,78 @@
   async function mutate(kind: string, id: number) {
     if (busy) return;
     error = ''; busy = true;
+    let ok = false;
     try {
       accept(await invoke<Snapshot>('change_tasks', { request: request(), actions: [{ kind, taskIds: [id], title: null, description: null, labels: null, taskType: null, priority: null, dueDate: null }] }));
+      ok = true;
     } catch (e) { error = String(e); }
     finally { busy = false; if(kind==='complete')feedbackTaskId=id; }
+    if (ok && kind === 'complete') {
+      celebrate();
+      const task = data?.tasks.find(t => t.id === id);
+      notice = `🎉 Done! ${task ? `“${task.title}”` : reference(id)} is complete.`;
+      if (allDoneTaskId === id) allDoneTaskId = null;
+    }
+  }
+  async function stepChange(id: number, kind: 'add_subtasks' | 'toggle_subtask' | 'remove_subtask', extra: { entryIndex?: number; subtasks?: string[] }) {
+    if (browserPreview && data) {
+      // Visual preview only: mirror the backend so the checklist can be tried in a browser.
+      const tasks = data.tasks.map(t => {
+        if (t.id !== id) return t;
+        const list = [...steps(t)];
+        if (kind === 'add_subtasks') list.push(...(extra.subtasks || []).map(title => ({ title, done: false, doneAt: null })));
+        else if (kind === 'remove_subtask') list.splice(extra.entryIndex!, 1);
+        else list[extra.entryIndex!] = { ...list[extra.entryIndex!], done: !list[extra.entryIndex!].done, doneAt: new Date().toISOString() };
+        return { ...t, subtasks: list };
+      });
+      data = { ...data, tasks, visible: data.visible.map(v => tasks.find(t => t.id === v.id) || v) };
+      return true;
+    }
+    if (busy) return false;
+    busy = true; error = '';
+    try {
+      accept(await invoke<Snapshot>('change_tasks', { request: request(), actions: [{ kind, taskIds: [id], title: null, description: null, labels: null, taskType: null, priority: null, dueDate: null, entryIndex: extra.entryIndex ?? null, subtasks: extra.subtasks ?? null }] }));
+      return true;
+    } catch (e) { error = String(e); return false; }
+    finally { busy = false; }
+  }
+  async function toggleStep(task: Task, index: number, event: MouseEvent) {
+    const finishing = !steps(task)[index]?.done;
+    const [x, y] = centerOf(event.currentTarget as Element);
+    if (finishing) { burst(x, y); poppedStep = `${task.id}:${index}`; setTimeout(() => { if (poppedStep === `${task.id}:${index}`) poppedStep = ''; }, 700); }
+    if (!(await stepChange(task.id, 'toggle_subtask', { entryIndex: index }))) return;
+    const updated = data?.tasks.find(t => t.id === task.id);
+    if (finishing && updated && steps(updated).length && stepsDone(updated) === steps(updated).length) {
+      allSteps(x, y);
+      if (updated.status !== 'done') allDoneTaskId = updated.id;
+    } else if (!finishing && allDoneTaskId === task.id) allDoneTaskId = null;
+  }
+  async function addStep(task: Task) {
+    const titles = stepDraft.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!titles.length) return;
+    if (await stepChange(task.id, 'add_subtasks', { subtasks: titles })) { stepDraft = ''; if (allDoneTaskId === task.id) allDoneTaskId = null; }
+  }
+  async function breakDown(task: Task) {
+    if (breakdownBusy) return;
+    if (browserPreview) { await stepChange(task.id, 'add_subtasks', { subtasks: ['Open the assignment and skim the requirements', 'List the three things it asks for', 'Draft the first section roughly', 'Fill in the remaining sections', 'Proofread once and submit'] }); freshSteps = Date.now(); return; }
+    if (!data?.configured) { await openSettings(); return; }
+    breakdownBusy = true; error = '';
+    const before = steps(task).length;
+    try {
+      accept(await invoke<Snapshot>('break_down_task', { request: request(), id: task.id }));
+      const added = steps(data!.tasks.find(t => t.id === task.id)!).length - before;
+      freshSteps = Date.now();
+      notice = `✨ Broke it into ${added} small step${added === 1 ? '' : 's'}. Start with the first one.`;
+      if (allDoneTaskId === task.id) allDoneTaskId = null;
+    } catch (e) { error = String(e); }
+    finally { breakdownBusy = false; }
+  }
+  async function saveTimer() {
+    timerSaving = true; settingsError = '';
+    setSoundsEnabled(soundsDraft);
+    try { if (!browserPreview) accept(await invoke<Snapshot>('save_timer_settings', { request: request(), settings: { ...timerDraft } })); settingsOpen = false; notice = timerDraft.multiple ? `Timers saved · several at once · cutoff ${capLabel(timerDraft.capMinutes).toLowerCase()}` : `Timers saved · one at a time · cutoff ${capLabel(timerDraft.capMinutes).toLowerCase()}`; }
+    catch (e) { settingsError = String(e); }
+    finally { timerSaving = false; }
   }
   async function toggleDemo() {
     if (busy || browserPreview) return;
@@ -270,6 +385,8 @@
   }
   async function openSettings() {
     settingsOpen = true; settingsTab = 'assistant'; settingsError = ''; apiKey = ''; canvasFormToken = ''; canvasSettingsError = '';
+    timerDraft = { ...timer }; soundsDraft = soundsEnabled();
+    loadSync().then(syncForm);
     if (browserPreview) return;
     try { [settings, canvas] = await Promise.all([invoke<Settings>('get_settings'), invoke<CanvasSettings>('get_canvas_settings')]); canvasFormUrl = canvas.baseUrl; canvasFormAuto = canvas.autoSync; }
     catch (e) { settingsError = String(e); }
@@ -285,7 +402,7 @@
   onMount(() => {
     browserPreview = !desktop();
     if (browserPreview) { data = preview(); demo = true; }
-    else { refresh(); refreshCanvas(); }
+    else { refresh(); refreshCanvas(); loadSync(); }
     const syncAppearance = async () => {
       if (!desktop()) return;
       try {
@@ -295,7 +412,15 @@
     };
     syncAppearance();
     document.documentElement.dataset.macos = String(desktop() && /Mac/.test(navigator.platform));
-    const timerTick = window.setInterval(() => { clock = Date.now(); }, 1000);
+    let cutoffCheck = 0;
+    const timerTick = window.setInterval(() => {
+      clock = Date.now();
+      // When a session reaches the cutoff, reload so the backend's stop shows up right away.
+      if (!browserPreview && !busy && clock - cutoffCheck > 10000 && runningTasks.some(t => cutoffLeft(t) <= 0)) {
+        cutoffCheck = clock;
+        refresh().then(() => { nativeNote = `A timer reached your ${capLabel(timer.capMinutes).toLowerCase()} cutoff and stopped. If you took a break, correct the session in Effort & time.`; });
+      }
+    }, 1000);
     const capacityPoll = window.setInterval(()=>{if(!busy && !browserPreview && !estimateDirty) refresh();},60000);
     const onFocus = () => { syncAppearance(); if (!browserPreview) refresh(); };
     window.addEventListener('focus', onFocus);
@@ -312,9 +437,11 @@
         if (event.error) { canvas.error = event.error; canvasNotice = event.error; }
       }),
       listen('appearance-changed', syncAppearance),
+      listen<SyncStatus>('sync-status', status => { syncStatus = status; }),
       listen<{ demo?: boolean; reason?: string }>('tasks-changed', event => {
         if (event.demo !== undefined && event.demo !== demo) return;
         if (event.reason === 'sleep') nativeNote = 'Focus paused when your Mac went to sleep. Resume when you’re ready.';
+        if (event.reason === 'cutoff') nativeNote = `A timer reached your ${capLabel(timer.capMinutes).toLowerCase()} cutoff and stopped. If you took a break, correct the session in Effort & time.`;
         if (!busy) refresh();
       }),
     ]) pending.then(fn => disposed ? fn() : nativeListeners.push(fn));
@@ -339,7 +466,7 @@
     <div class="nav-label">CONNECTED</div>
     <div class="canvas-sidebar"><button disabled={busy} onclick={showCanvas}><span class="canvas-glyph">◉</span><span>Canvas<small>{canvasBusy?'Syncing…':canvas.error?'Needs attention':canvas.configured?`${canvasCount} remaining`:'Connect courses'}</small></span></button><button disabled={canvasBusy||browserPreview} onclick={syncCanvas} aria-label="Sync Canvas">↻</button></div>
     <details class="labels-disclosure"><summary>Labels <span>{labels.length}</span></summary>{#each labels as [label,count]}<button onclick={() => navigate('all',label)}><span class="label-dot"></span>{label}<small>{count}</small></button>{/each}</details>
-    <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={openSettings}>⚙ Connections</button><div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div></div>
+    <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={openSettings}>⚙ Connections</button>{#if syncStatus?.enabled}<button class="local-workspace sync-line" class:sync-problem={Boolean(syncStatus.error)} onclick={()=>{openSettings().then(()=>settingsTab='sync');}} title={syncStatus.error || `Last synced ${ago(syncStatus.lastSyncedAt)}`}><span class="online-dot"></span>{syncStatus.error ? 'Sync needs attention' : `Synced via ${providerOf(syncStatus.folder)}`}<small>{syncStatus.error ? 'Open sync settings' : `${syncStatus.devices.length} other device${syncStatus.devices.length===1?'':'s'} · ${ago(syncStatus.lastSyncedAt)}`}</small></button>{:else}<div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div>{/if}</div>
   </aside>
   <main>
     <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>⌘K</kbd></button></div></header>
@@ -348,6 +475,9 @@
       {#if error}<div class="error-banner" role="alert">{error}<button onclick={() => error=''} aria-label="Dismiss error">×</button></div>{/if}
       {#if notice || nativeNote || canvasNotice}<div class="notice" role="status">{notice || nativeNote || canvasNotice}<button onclick={() => {notice='';nativeNote='';canvasNotice='';}} aria-label="Dismiss status">×</button></div>{/if}
       {#if feedbackTaskId}<div class="completion-feedback"><strong>Task finished. How demanding did it feel?</strong><div><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,1)}>Lighter</button><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,3)}>As expected</button><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,5)}>Draining</button><button class="text-button" onclick={() => feedbackTaskId=null}>Later</button></div></div>{/if}
+      {#if runningTasks.length > 1 || runningTasks.some(t => cutoffLeft(t) < 15 * 60000)}
+        <section class="running-strip" aria-label="Running timers"><span class="section-kicker">{runningTasks.length} RUNNING {runningTasks.length === 1 ? 'TIMER' : 'TIMERS'}</span><div class="running-chips">{#each runningTasks as task (task.id)}<div class="running-chip" style={`--hue:${taskHue(task.id)}`} in:scale={{ start: .85, duration: 220 }}><span class="pulse-dot"></span><button class="running-name" onclick={() => inspect(task.id)}>{task.title}</button><strong class="live-clock">{duration(elapsed(task))}</strong>{#if cutoffLeft(task) < 15 * 60000}<small class="cutoff-warning">stops in {Math.max(1, Math.ceil(cutoffLeft(task) / 60000))}m</small>{/if}<button class="chip-action" disabled={busy} onclick={() => mutate('pause', task.id)} aria-label={`Pause ${task.title}`}>Ⅱ</button><button class="chip-action" disabled={busy} onclick={() => mutate('complete', task.id)} aria-label={`Complete ${task.title}`}>✓</button></div>{/each}</div></section>
+      {/if}
       {#if screen==='now' && day}
         <section class="capacity-summary"><div><span class="section-kicker">TODAY’S CAPACITY</span><h2>{mins(day.remainingMinutes)} <small>and</small> {wu(day.remainingUnits)} <small>WU left</small></h2><p>{mins(day.spentMinutes)} tracked · {wu(day.spentUnits)} WU used · {day.energy<=2?'Lower energy':day.energy>=4?'Higher energy':'Usual energy'}</p></div><button class="secondary-button" onclick={() => budgetOpen=!budgetOpen}>Adjust today</button></section>
         {#if budgetOpen}<form class="today-checkin" onsubmit={event=>{event.preventDefault();saveDay();}}><label>Focused minutes available today<input type="number" min="0" max="720" step="1" required bind:value={dayMinutes} oninput={()=>dayDirty=true}/></label><label>Energy today<select bind:value={dayEnergy} onchange={()=>dayDirty=true}><option value={1}>Low</option><option value={3}>Usual</option><option value={5}>High</option></select></label><button class="primary-button" disabled={busy}>Update plan</button><p>Total daily budget, including time already tracked.</p></form>{/if}
@@ -358,7 +488,7 @@
       {#if screen==='now'||screen==='next'}
         <section class="task-panel"><div class="task-toolbar"><h2>{screen==='now'?'Today’s suggested blocks':'Task list'} <span>{taskRows.length}</span></h2><div class="table-tools">{#if screen==='next'}<input class="search" bind:this={searchField} aria-label="Search tasks" placeholder="Search tasks…" value={view.query} oninput={event=>refresh({query:event.currentTarget.value})}/><select aria-label="Sort tasks" value={view.sort} onchange={event=>refresh({sort:event.currentTarget.value})}><option value="fit">Personal fit</option><option value="priority">Priority</option><option value="due">Due date</option><option value="time">Time tracked</option><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="title">Title</option></select>{:else}<button class="text-button" onclick={()=>navigate('open')}>All tasks →</button>{/if}</div></div>
           {#if screen==='next'}<div class="filter-row"><select aria-label="Task status" value={view.status} onchange={event=>refresh({status:event.currentTarget.value})}><option value="open">Open</option><option value="all">All</option><option value="done">Completed</option><option value="deleted">Trash</option><option value="today">Due today</option></select><select aria-label="Task type" value={view.taskType} onchange={event=>refresh({taskType:event.currentTarget.value})}><option value="">All types</option>{#each ['bug','feature','chore','research','meeting','personal','assignment'] as kind}<option>{kind}</option>{/each}</select>{#if view.label}<button class="filter-chip" onclick={()=>refresh({label:''})}>{view.label} ×</button>{/if}</div>{/if}
-          <div class="table-scroll"><table><thead><tr><th>Task</th><th>Work estimate</th><th>Due</th><th></th></tr></thead><tbody>{#each taskRows as task (task.id)}{@const a=assessment(task.id)}{@const block=planned.find(b=>b.taskId===task.id)}<tr class:selected-row={selectedId===task.id}><td><button class="task-title" onclick={()=>inspect(task.id)} oncontextmenu={event=>taskMenu(event,task)}>{task.title}</button><div class="task-meta"><span>{reference(task.id)}</span><span>·</span><span>{task.canvas?.courseCode || task.type}</span>{#if task.status==='done'}<span class="done-label">✓ Done</span>{/if}{#if task.timerStartedAt}<span class="live-label">● Running</span>{/if}</div></td><td><button class="estimate-cell" onclick={()=>inspect(task.id)}><strong>{(task.organization?.role || 'task')!=='task'?task.organization?.role:a?`${wu(task.status==='done'?a.totalUnits:a.units)} WU`:'—'}</strong><span>{(task.organization?.role || 'task')!=='task'?[task.organization?.startsOn,task.organization?.endsOn].filter(Boolean).join(' → ') || 'Planning item':screen==='now'&&block?.partial?`${mins(block.minutes)} block · ${mins(a?.remainingMinutes || 0)} total`:mins(task.status==='done'?(a?.predictedMinutes || 0):(a?.remainingMinutes || 0))}</span>{#if a?.estimate.source==='starter'&&(task.organization?.role || 'task')==='task'}<small>Provisional</small>{/if}</button></td><td><span class:overdue={overdue(task)} class="due-date">{dateLabel(task.dueDate)}</span></td><td><div class="row-actions">{#if task.deleted}<button disabled={busy} onclick={()=>mutate('restore',task.id)} aria-label={`Restore ${reference(task.id)}`}>↶</button>{:else if task.status!=='done'}{#if (task.organization?.role || 'task')==='task'}<button disabled={busy} onclick={()=>mutate(task.timerStartedAt?'pause':'start',task.id)} aria-label={`${task.timerStartedAt?'Pause':'Start'} ${reference(task.id)}`}>{task.timerStartedAt?'Ⅱ':'▷'}</button>{/if}<button disabled={busy} onclick={()=>mutate('complete',task.id)} aria-label={`Complete ${reference(task.id)}`}>✓</button>{/if}<button onclick={event=>taskMenu(event,task)} aria-label={`Actions for ${reference(task.id)}`}>···</button></div></td></tr>{/each}</tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th>Task</th><th>Work estimate</th><th>Due</th><th></th></tr></thead><tbody>{#each taskRows as task (task.id)}{@const a=assessment(task.id)}{@const block=planned.find(b=>b.taskId===task.id)}<tr class:selected-row={selectedId===task.id}><td><button class="task-title" onclick={()=>inspect(task.id)} oncontextmenu={event=>taskMenu(event,task)}>{task.title}</button><div class="task-meta"><span>{reference(task.id)}</span><span>·</span><span>{task.canvas?.courseCode || task.type}</span>{#if task.status==='done'}<span class="done-label">✓ Done</span>{/if}{#if task.timerStartedAt}<span class="live-label" style={`color:${taskHue(task.id)}`}>● {duration(elapsed(task))}</span>{/if}{#if steps(task).length}<span class="step-pill" class:complete={stepsDone(task)===steps(task).length} title={`${stepsDone(task)} of ${steps(task).length} steps done`}><span class="step-pill-bar"><span style={`width:${stepPercent(task)}%`}></span></span>{stepsDone(task)}/{steps(task).length}</span>{/if}</div></td><td><button class="estimate-cell" onclick={()=>inspect(task.id)}><strong>{(task.organization?.role || 'task')!=='task'?task.organization?.role:a?`${wu(task.status==='done'?a.totalUnits:a.units)} WU`:'—'}</strong><span>{(task.organization?.role || 'task')!=='task'?[task.organization?.startsOn,task.organization?.endsOn].filter(Boolean).join(' → ') || 'Planning item':screen==='now'&&block?.partial?`${mins(block.minutes)} block · ${mins(a?.remainingMinutes || 0)} total`:mins(task.status==='done'?(a?.predictedMinutes || 0):(a?.remainingMinutes || 0))}</span>{#if a?.estimate.source==='starter'&&(task.organization?.role || 'task')==='task'}<small>Provisional</small>{/if}</button></td><td><span class:overdue={overdue(task)} class="due-date">{dateLabel(task.dueDate)}</span></td><td><div class="row-actions">{#if task.deleted}<button disabled={busy} onclick={()=>mutate('restore',task.id)} aria-label={`Restore ${reference(task.id)}`}>↶</button>{:else if task.status!=='done'}{#if (task.organization?.role || 'task')==='task'}<button disabled={busy} onclick={()=>mutate(task.timerStartedAt?'pause':'start',task.id)} aria-label={`${task.timerStartedAt?'Pause':'Start'} ${reference(task.id)}`}>{task.timerStartedAt?'Ⅱ':'▷'}</button>{/if}<button disabled={busy} onclick={()=>mutate('complete',task.id)} aria-label={`Complete ${reference(task.id)}`}>✓</button>{/if}<button onclick={event=>taskMenu(event,task)} aria-label={`Actions for ${reference(task.id)}`}>···</button></div></td></tr>{/each}</tbody></table></div>
           {#if !taskRows.length}<div class="empty-state"><h3>{screen==='now'?'No blocks planned':'No tasks in this view'}</h3><p>{screen==='now'?'Adjust your available time, refine an estimate, or let the day stay light.':'Try another filter, connect Canvas, or capture a task.'}</p></div>{/if}
         </section><div class="model-note"><span>{data?.workload.calibration.stage || 'Starter estimates'}</span><span>{data?.workload.calibration.timeSamples || 0} timed completions · {data?.workload.calibration.effortSamples || 0} effort ratings</span><button onclick={()=>screen='week'}>How it learns ↗</button></div><p class="unit-note">1 work unit ≈ 25 focused minutes at moderate load. Hard, tedious, uncertain work can cost more. Urgency changes order, not effort.</p>
       {/if}
@@ -370,7 +500,15 @@
       {#if screen==='journal'}<section class="focus-journal"><header><div><h2>Recorded focus</h2><p>Sessions ending on the selected day, plus manual time logged for that date.</p></div><input type="date" aria-label="Journal date" bind:value={journalDate}/></header><div class="journal-summary"><strong>{duration(journalTotal)}</strong><span>{journal.length} completed sessions</span></div>{#each journal as entry}<button class="journal-entry" onclick={()=>inspect(entry.task.id)}><span class="journal-time">{entry.manual?'Manual':clockTime(entry.startedAt)}<small>{entry.manual?'Added time':`to ${clockTime(entry.endedAt)}`}</small></span><span class="journal-task"><strong>{entry.task.title}</strong><small>{reference(entry.task.id)}</small></span><span class="journal-duration">{duration(entry.durationMs)}</span></button>{/each}{#if !journal.length}<div class="empty-state"><h3>No sessions recorded</h3><p>Start and pause a timer, or add time from a task's Effort & time tab.</p></div>{/if}</section>{/if}
     </div>
   </main>
-  {#if selected && !chatOpen}{@const a=assessment(selected.id)}<div class="task-card-backdrop" role="presentation"><div class="inspector task-card" use:focusCard role="dialog" aria-modal="true" aria-label={selected.title} tabindex="-1" onkeydown={event=>{if(event.key==='Escape')selectedId=null;}}><header><span>{reference(selected.id)}</span><button onclick={()=>selectedId=null} aria-label="Close inspector">×</button></header><div class="inspector-content"><span class="section-kicker">{selected.organization?.role || 'task'} · {statusName(selected.status)}</span><h2>{selected.title}</h2>{#if error}<p class="card-error" role="alert">{error}</p>{/if}<nav class="card-tabs"><button class:active={cardSection==='overview'} onclick={()=>cardSection='overview'}>Overview</button><button class:active={cardSection==='links'} onclick={()=>cardSection='links'}>Links & planning</button>{#if (selected.organization?.role || 'task')==='task'}<button class:active={cardSection==='effort'} onclick={()=>cardSection='effort'}>Effort & time</button>{/if}</nav>{#if cardSection==='overview'}<p class="detail-description">{selected.description || 'No description yet.'}</p><div class="work-tags">{#each selected.labels as label}<button class={`label-pill label-${label}`} onclick={()=>navigate('all',label)}>{label}</button>{/each}</div><div class="inspector-actions">{#if selected.deleted}<button class="secondary-button" disabled={busy} onclick={()=>mutate('restore',selected.id)}>Restore</button>{:else if selected.status==='done'}<button class="secondary-button" disabled={busy} onclick={()=>mutate('reopen',selected.id)}>Reopen</button>{:else}{#if (selected.organization?.role || 'task')==='task'}<button class="primary-button" disabled={busy} onclick={()=>mutate(selected.timerStartedAt?'pause':'start',selected.id)}>{selected.timerStartedAt?'Ⅱ Pause':'▷ Start'}</button>{/if}<button class="secondary-button" disabled={busy} onclick={()=>mutate('complete',selected.id)}>✓ Complete</button>{/if}<button class="text-button" onclick={()=>compose(`Update ${reference(selected.id)}: `)}>Edit in chat</button></div>
+  {#if selected && !chatOpen}{@const a=assessment(selected.id)}<div class="task-card-backdrop" role="presentation"><div class="inspector task-card" use:focusCard role="dialog" aria-modal="true" aria-label={selected.title} tabindex="-1" onkeydown={event=>{if(event.key==='Escape')selectedId=null;}}><header><span>{reference(selected.id)}</span><button onclick={()=>selectedId=null} aria-label="Close inspector">×</button></header><div class="inspector-content"><span class="section-kicker">{selected.organization?.role || 'task'} · {statusName(selected.status)}</span><h2>{selected.title}</h2>{#if error}<p class="card-error" role="alert">{error}</p>{/if}<nav class="card-tabs"><button class:active={cardSection==='overview'} onclick={()=>cardSection='overview'}>Overview</button><button class:active={cardSection==='links'} onclick={()=>cardSection='links'}>Links & planning</button>{#if (selected.organization?.role || 'task')==='task'}<button class:active={cardSection==='effort'} onclick={()=>cardSection='effort'}>Effort & time</button>{/if}</nav>{#if cardSection==='overview'}<p class="detail-description">{selected.description || 'No description yet.'}</p>
+{#if (selected.organization?.role || 'task')==='task' && !selected.deleted}{@const list=steps(selected)}{@const pct=stepPercent(selected)}
+<section class="steps-panel" class:all-done={list.length>0 && stepsDone(selected)===list.length}>
+  <header><div class="progress-ring" style={`--pct:${pct}`} aria-label={`${pct}% of steps done`}><span>{list.length ? `${pct}%` : '✦'}</span></div><div><h3>Steps</h3><small>{list.length ? (stepsDone(selected)===list.length ? 'Every step done — amazing!' : `${stepsDone(selected)} of ${list.length} done · next: ${list.find(st=>!st.done)?.title}`) : 'Big task? Split it into tiny wins.'}</small></div><button class="breakdown-button" class:working={breakdownBusy} disabled={breakdownBusy||busy||selected.status==='done'} onclick={()=>breakDown(selected)}>{breakdownBusy ? 'Breaking it down…' : list.length ? '✨ More steps' : '✨ Break it down'}</button></header>
+  {#if list.length}<div class="steps-bar"><span style={`width:${pct}%`}></span></div>{/if}
+  {#if allDoneTaskId===selected.id && selected.status!=='done'}<div class="all-done-banner" in:scale={{start:.9,duration:260}}><strong>🎉 All steps done!</strong><span>Mark the whole task complete?</span><button class="primary-button" disabled={busy} onclick={()=>mutate('complete',selected.id)}>✓ Complete task</button></div>{/if}
+  <ul class="step-list">{#each list as step, i (`${freshSteps}:${i}:${step.title}`)}<li class:done={step.done} class:popped={poppedStep===`${selected.id}:${i}`} in:fly={{ y: 8, duration: 260, delay: Math.min(i, 8) * 70 }}><button class="step-check" disabled={busy} role="checkbox" aria-checked={step.done} aria-label={`${step.done ? 'Uncheck' : 'Check'} step: ${step.title}`} onclick={event=>toggleStep(selected,i,event)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg></button><span class="step-title">{step.title}</span><button class="step-remove" disabled={busy} onclick={()=>stepChange(selected.id,'remove_subtask',{entryIndex:i})} aria-label={`Remove step: ${step.title}`}>×</button></li>{/each}</ul>
+  <form class="step-add" onsubmit={event=>{event.preventDefault();addStep(selected);}}><input bind:value={stepDraft} maxlength="200" placeholder="Add a small step…" aria-label="New step"/><button class="secondary-button" disabled={busy||!stepDraft.trim()}>Add</button></form>
+</section>{/if}<div class="work-tags">{#each selected.labels as label}<button class={`label-pill label-${label}`} onclick={()=>navigate('all',label)}>{label}</button>{/each}</div><div class="inspector-actions">{#if selected.deleted}<button class="secondary-button" disabled={busy} onclick={()=>mutate('restore',selected.id)}>Restore</button>{:else if selected.status==='done'}<button class="secondary-button" disabled={busy} onclick={()=>mutate('reopen',selected.id)}>Reopen</button>{:else}{#if (selected.organization?.role || 'task')==='task'}<button class="primary-button" disabled={busy} onclick={()=>mutate(selected.timerStartedAt?'pause':'start',selected.id)}>{selected.timerStartedAt?'Ⅱ Pause':'▷ Start'}</button>{/if}<button class="secondary-button" disabled={busy} onclick={()=>mutate('complete',selected.id)}>✓ Complete</button>{/if}<button class="text-button" onclick={()=>compose(`Update ${reference(selected.id)}: `)}>Edit in chat</button></div>
 {#each selected.organization?.external || [] as link,i}<button class="linked-item" onclick={()=>openReference(selected.id,i)}><span>{link.provider}</span>{link.remoteId} ↗</button>{/each}
 <section class="linked-summary"><h3>Connected work</h3>{#each [selected.organization?.parentId,selected.organization?.milestoneId,selected.organization?.cycleId,...(selected.organization?.relatedIds || []),...(data?.tasks.filter(t=>!t.deleted&&t.id!==selected.id&&(t.organization?.parentId===selected.id||t.organization?.milestoneId===selected.id||t.organization?.cycleId===selected.id||t.organization?.relatedIds.includes(selected.id))).map(t=>t.id)||[])] .filter((id):id is number=>Boolean(id)).filter((id,i,ids)=>ids.indexOf(id)===i) as id}<button class="linked-item" onclick={()=>inspect(id)}><span>{reference(id)}</span>{data?.tasks.find(t=>t.id===id)?.title || 'Unavailable item'} →</button>{/each}<button class="text-button" onclick={()=>cardSection='links'}>Add or change links →</button></section>
       {:else if cardSection==='links'}
@@ -385,7 +523,7 @@
       <form class="estimate-editor" onsubmit={event=>{event.preventDefault();saveEstimate();}}><h3>What does this task ask of you?</h3><label>Estimated total focused minutes<input type="number" min="5" max="2400" step="1" required bind:value={estimateDraft.minutes} oninput={()=>estimateDirty=true}/></label>{#each factors as factor}<label class="factor-control"><span><strong>{factor.label}</strong><small>{factor.hint}</small></span><output>{estimateDraft[factor.key]}/5</output><input type="range" min="1" max="5" step="1" bind:value={estimateDraft[factor.key]} oninput={()=>estimateDirty=true}/></label>{/each}<div class="estimate-buttons"><button class="primary-button" disabled={busy||!estimateDirty}>Save estimate</button><button type="button" class="secondary-button" disabled={assessmentBusy||busy||estimateDraft.source==='user'} onclick={assessEstimate}>{assessmentBusy?'Assessing…':'Assess effort'}</button></div><p class="muted">Deadlines never reduce this effort estimate. Timers measure work; ratings teach the personal load weights.</p></form>
       <section class="tracked-detail">
         <h3>Recorded work</h3><strong>{duration(elapsed(selected))}</strong>
-        <span>{selected.timeEntries?.length || 0} completed sessions{selected.timerStartedAt?' · timer running':''}</span>
+        <span>{selected.timeEntries?.length || 0} completed sessions{selected.timerStartedAt?' · timer running':''}{timer.capMinutes>0?` · stops automatically after ${capLabel(timer.capMinutes).toLowerCase()}`:''}</span>
         {#if !selected.deleted}
           <form class="manual-time-form" onsubmit={event=>{event.preventDefault();changeTime('add_time',selected.id);}}>
             <h4>Add work time</h4>
@@ -396,7 +534,7 @@
           <div class="recorded-sessions">
             {#each [...selected.timeEntries].map((entry,index)=>({entry,index})).reverse() as item (item.index)}
               <div class="recorded-session">
-                <div><strong>{duration(item.entry.durationMs)}</strong><small>{new Date(item.entry.endedAt).toLocaleDateString()} · {item.entry.manual?'Manual':'Timer'}</small></div>
+                <div><strong>{duration(item.entry.durationMs)}</strong><small>{new Date(item.entry.endedAt).toLocaleDateString()} · {item.entry.manual?'Manual':'Timer'}{#if item.entry.autoStopped}<span class="auto-stopped" title="This session hit your timer cutoff and stopped automatically. Edit it if you took a break.">Auto-stopped</span>{/if}</small></div>
                 {#if editingEntryIndex===item.index}
                   <form onsubmit={event=>{event.preventDefault();changeTime('set_time',selected.id,item.index);}}><input type="number" min="1" max="1440" step="1" required aria-label="Correct session minutes" bind:value={editedMinutes}/><button disabled={busy}>Save</button><button type="button" onclick={()=>editingEntryIndex=null}>Cancel</button></form>
                 {:else}
@@ -418,9 +556,31 @@
   <div class="modal-backdrop" role="presentation"><div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
     <div class="modal-title"><span class="assistant-mark">✧</span><button aria-label="Close settings" onclick={() => settingsOpen = false}>×</button></div>
     <h2 id="settings-title">Connections</h2><p>Your assistant, your coursework, one place to focus.</p>
-    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button></div>
+    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button><button class:chosen={settingsTab === 'focus'} onclick={() => settingsTab = 'focus'}>Focus</button><button class:chosen={settingsTab === 'sync'} onclick={() => settingsTab = 'sync'}>Sync</button></div>
     {#if settingsTab === 'assistant'}
       <form onsubmit={(event) => { event.preventDefault(); saveSettings(); }}><label>OpenRouter API key<input type="password" bind:value={apiKey} autocomplete="off" placeholder={settings.configured ? 'Connected · leave blank to keep your key' : 'sk-or-…'} /></label><label>Writing & reasoning model<input bind:value={settings.model} placeholder="google/gemini-2.5-flash" /></label><label>Jev model<input bind:value={settings.jevModel} /></label><label>Reasoning effort<select bind:value={settings.reasoningEffort}><option value="minimal">Minimal · quickest</option><option value="low">Low · fast and thoughtful</option><option value="medium">Medium</option><option value="high">High · more thinking time</option></select></label><p class="settings-note">Your key is stored locally with restricted file permissions. Chat sends task context, including imported assignment descriptions, to OpenRouter.</p>{#if settingsError}<div class="settings-error" role="alert">{settingsError}</div>{/if}<button class="primary-button save-settings" disabled={settingsBusy || browserPreview}>{settingsBusy ? 'Saving…' : 'Save assistant settings'}<span>→</span></button></form>
+    {:else if settingsTab === 'sync'}
+      <form onsubmit={event => { event.preventDefault(); saveSync(); }}>
+        <p class="canvas-connect-intro">Keep your tasks on every device through a folder you already sync, like Obsidian does. Each device writes only its own file in <strong>Cadence Sync</strong>, so iCloud or OneDrive never has to untangle two edits to one file.</p>
+        {#if syncStatus?.providers.length}<div class="provider-picks" role="group" aria-label="Synced folders found on this computer">{#each syncStatus.providers as p}<button type="button" class:chosen={syncFolder===p.path} onclick={()=>syncFolder=p.path}><strong>{p.name}</strong><small>{p.path}</small></button>{/each}</div>{:else if !browserPreview}<p class="settings-note">No iCloud Drive, OneDrive, Dropbox or Google Drive folder was found. Sign in to one, or paste the path to any folder that syncs.</p>{/if}
+        <label>Sync folder<input bind:value={syncFolder} placeholder="/Users/you/Library/Mobile Documents/com~apple~CloudDocs" spellcheck="false" /></label>
+        <label>This device's name<input bind:value={syncDevice} maxlength="60" placeholder="My MacBook" /></label>
+        <label class="canvas-auto"><input type="checkbox" bind:checked={syncEnabled} /><span>Sync tasks through this folder</span></label>
+        {#if syncStatus?.enabled}<div class="canvas-sync-report sync-report"><strong>{syncStatus.error ? 'Sync paused' : `Last synced ${ago(syncStatus.lastSyncedAt)}`}</strong>{#each syncStatus.devices as d}<small>⇄ {d.name} · {d.tasks} tasks · updated {ago(d.exportedAt)}</small>{:else}<small>No other devices yet. Turn on sync with the same folder on your other computer.</small>{/each}{#if syncStatus.report && (syncStatus.report.created || syncStatus.report.updated)}<small>Last merge: {syncStatus.report.created} added · {syncStatus.report.updated} updated{syncStatus.report.skipped ? ` · ${syncStatus.report.skipped} skipped` : ''}</small>{/if}{#each syncStatus.warnings as w}<small class="sync-warning">{w}</small>{/each}<button type="button" class="canvas-view-button" disabled={syncBusy} onclick={syncNow}>{syncBusy ? 'Syncing…' : 'Sync now ↻'}</button></div>{/if}
+        {#if syncError || syncStatus?.error}<div class="settings-error" role="alert">{syncError || syncStatus?.error}</div>{/if}
+        <p class="settings-note">Syncs tasks, steps, timers and Trash; when the same task changes on two devices, the most recent edit wins. Chat history, capacity and API keys stay on each device. Task numbers can differ between devices when both create tasks before syncing.</p>
+        <button class="primary-button save-settings" disabled={syncBusy || browserPreview}>{syncBusy ? 'Syncing…' : 'Save & sync'}<span>⇄</span></button>
+      </form>
+    {:else if settingsTab === 'focus'}
+      <form onsubmit={event => { event.preventDefault(); saveTimer(); }}>
+        <p class="canvas-connect-intro">Timers that fit how you actually work: juggle several things at once, and never lose a whole night to a forgotten timer.</p>
+        <label class="canvas-auto"><input type="checkbox" bind:checked={timerDraft.multiple} /><span>Let several tasks run timers at the same time</span></label>
+        <label>Stop a timer automatically after<select bind:value={timerDraft.capMinutes}>{#each [30, 60, 90, 120, 180, 240, 360, 480, 720, 0] as m}<option value={m}>{capLabel(m)}{m===240?' (recommended)':''}</option>{/each}</select></label>
+        <p class="settings-note">Nobody focuses for 12 hours straight. When a session passes the cutoff, Cadence stops it and records only up to the cutoff, marked “Auto-stopped” so you can correct it.</p>
+        <label class="canvas-auto"><input type="checkbox" bind:checked={soundsDraft} /><span>Play a soft chime when you check off steps and finish tasks</span></label>
+        {#if settingsError}<div class="settings-error" role="alert">{settingsError}</div>{/if}
+        <button class="primary-button save-settings" disabled={timerSaving}>{timerSaving ? 'Saving…' : 'Save focus settings'}<span>→</span></button>
+      </form>
     {:else}
       <form onsubmit={event => { event.preventDefault(); saveCanvas(); }}>
         <p class="canvas-connect-intro">Bring assignments and their requirements from your active student courses into All tasks. Every imported assignment gets the <strong>canvas</strong> label.</p>

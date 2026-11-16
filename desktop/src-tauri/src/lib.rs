@@ -7,6 +7,7 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 mod canvas_integration;
+mod sync_integration;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(desktop)]
@@ -131,7 +132,10 @@ fn snapshot(
     focus_ids: Vec<i64>,
 ) -> Result<Snapshot, String> {
     let config = Config::load(data_dir);
-    database(data_dir, request.demo)?.snapshot(
+    let mut store = database(data_dir, request.demo)?;
+    // Forgotten timers stop at the cutoff even if nothing else touched them.
+    store.enforce_timer_cap()?;
+    store.snapshot(
         request.view,
         focus_ids,
         !config.api_key.is_empty(),
@@ -331,6 +335,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             macos::setup(app.handle())?;
             canvas_integration::start_background(app.handle());
+            sync_integration::start_background(app.handle());
             #[cfg(desktop)]
             {
                 app.handle()
@@ -373,7 +378,12 @@ pub fn run() {
             workload_integration::save_day_checkin,
             workload_integration::rate_task_effort,
             workload_integration::review_capacity_day,
-            workload_integration::assess_task_effort
+            workload_integration::assess_task_effort,
+            workload_integration::save_timer_settings,
+            workload_integration::break_down_task,
+            sync_integration::get_sync_settings,
+            sync_integration::save_sync_settings,
+            sync_integration::sync_now
         ])
         .build(tauri::generate_context!())
         .expect("Could not start Cadence")
@@ -381,6 +391,9 @@ pub fn run() {
             if matches!(&event, tauri::RunEvent::Exit) {
                 app.state::<AppState>()
                     .canvas_stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                app.state::<sync_integration::SyncState>()
+                    .stop
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             #[cfg(target_os = "macos")]
