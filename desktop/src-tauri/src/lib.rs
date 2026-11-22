@@ -16,6 +16,7 @@ mod notifications;
 #[cfg(desktop)]
 mod status_bar;
 mod telemetry;
+mod whats_new;
 #[cfg(desktop)]
 mod updater;
 mod workload_integration;
@@ -342,6 +343,9 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            app.manage(whats_new::WhatsNewState {
+                fresh_install: !data_dir.join("tasks.sqlite").exists(),
+            });
             app.manage(AppState {
                 data_dir,
                 gate: Arc::new(Mutex::new(())),
@@ -444,6 +448,8 @@ pub fn run() {
             telemetry::save_telemetry_settings,
             telemetry::capture_usage_event,
             telemetry::submit_feedback,
+            whats_new::whats_new_status,
+            whats_new::mark_whats_new_seen,
             #[cfg(desktop)]
             updater::check_for_update,
             #[cfg(desktop)]

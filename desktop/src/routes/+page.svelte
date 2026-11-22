@@ -9,6 +9,8 @@
   import AlertSettings from '$lib/AlertSettings.svelte';
   import TaskReminders from '$lib/TaskReminders.svelte';
   import NewTaskForm from '$lib/NewTaskForm.svelte';
+  import WhatsNew from '$lib/WhatsNew.svelte';
+  import { compareVersions } from '$lib/changelog';
   import { burst, allSteps, celebrate, centerOf, sparkle, soundsEnabled, setSoundsEnabled } from '$lib/celebrate';
   import { fly, scale } from 'svelte/transition';
   import BreaksSettings from '$lib/settings/BreaksSettings.svelte';
@@ -261,6 +263,18 @@
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   const mod = isMac ? '⌘' : 'Ctrl+';
   function createGuided(){selectedId=null;compose('Walk me through creating a task.');}
+  let whatsNewOpen = $state(false);
+  let whatsNewSince = $state<string | null>(null);
+  function openWhatsNew(since: string | null = null) { whatsNewSince = since; whatsNewOpen = true; }
+  async function closeWhatsNew() { whatsNewOpen = false; if (!browserPreview) { try { await invoke('mark_whats_new_seen'); } catch { /* shown again next launch */ } } }
+  /** Opens release notes once after each update; brand-new installs start up to date. */
+  async function checkWhatsNew() {
+    try {
+      const status = await invoke<{ current: string; lastSeen: string | null; freshInstall: boolean }>('whats_new_status');
+      if (!status.lastSeen) { if (status.freshInstall) await invoke('mark_whats_new_seen'); else openWhatsNew('0.5.0'); return; }
+      if (compareVersions(status.current, status.lastSeen) > 0) openWhatsNew(status.lastSeen);
+    } catch { /* release notes are optional */ }
+  }
   let newTaskOpen = $state(false);
   let newTaskError = $state('');
   function openNewTask(){newTaskError='';newTaskOpen=true;settingsOpen=false;}
@@ -362,6 +376,7 @@
     switch (event.action) {
       case 'settings': await openSettings(); break;
       case 'check-updates': await openUpdates(); break;
+      case 'whats-new': settingsOpen = false; openWhatsNew(); break;
       case 'new-task': openNewTask(); break;
       case 'find-task': screen = 'next'; await tick(); searchField?.focus(); break;
       case 'focus-view': screen = 'now'; break;
@@ -535,7 +550,7 @@
       if (q.get('chat')) chatOpen = true;
       if (q.get('settings')) void openSettings(q.get('settings') as SettingsSection);
     }
-    else { refresh(); refreshCanvas(); loadSync(); refreshAlerts(); }
+    else { refresh(); refreshCanvas(); loadSync(); refreshAlerts(); checkWhatsNew(); }
     const syncAppearance = async () => {
       if (!desktop()) return;
       try {
@@ -700,6 +715,8 @@
   <aside class="chat-panel ai-panel" class:active={chatBusy} hidden={!chatOpen}><header class="chat-header" data-tauri-drag-region><div><strong>Conversation</strong><small>Capture, plan, and adjust.</small></div><button onclick={()=>chatOpen=false} aria-label="Close conversation">×</button></header><div class="chat-messages" aria-live="polite" aria-busy={chatBusy}>{#if !data?.messages.length}<div class="chat-welcome"><span class="ai-orb" aria-hidden="true"></span><h2>What’s on your mind?</h2><p>Tell me what needs doing in your own words. I can add and organize tasks, plan your day, break work into steps, and move deadlines.</p><div class="chat-ideas">{#each chatIdeas as idea}<button class="ai-chip" disabled={chatBusy||busy} onclick={()=>ask(idea)}>{idea}</button>{/each}</div></div>{/if}{#each data?.messages || [] as message (message.id)}<div class={`message ${message.role}`}><div class="message-author">{message.role==='user'?'YOU':'CADENCE'}</div><div class="message-content">{#if message.role==='assistant'}<RichReply text={message.content} known={id=>!!data?.tasks.some(t=>t.id===id)} onref={inspect} />{:else}{message.content}{/if}</div>{#if message.taskIds.length}<div class="message-refs">{#each message.taskIds as id}<button onclick={()=>inspect(id)}>{reference(id)} ↗</button>{/each}</div>{/if}</div>{/each}{#if pending}<div class="message user"><div class="message-author">YOU</div><div class="message-content">{pending}</div></div>{/if}{#if chatError}<div class="chat-error" role="alert"><span>{chatError}</span>{#if !data?.configured && !browserPreview}<button onclick={()=>openSettings('assistant')}>Open Assistant settings</button>{/if}<button aria-label="Dismiss" onclick={()=>chatError=''}>×</button></div>{/if}{#if chatBusy}<div class="thinking ai-thinking"><span class="ai-orb small" aria-hidden="true"></span>{phase} {Math.max(0,Math.floor((clock-chatStarted)/1000))}s{#if clock-chatStarted>15000}<p>The assistant is still working. You can keep using your tasks.</p>{/if}</div>{/if}<div bind:this={chatEnd}></div></div><div class="chat-compose-area">{#if selected}<div class="context-chip">About {reference(selected.id)}<button onclick={()=>selectedId=null} aria-label="Clear task context">×</button></div>{/if}{#if !data?.configured}<button class="connect-banner" onclick={() => openSettings()}>Connect OpenRouter to use chat →</button>{/if}<form class="composer ai-edge" class:active={chatBusy} onsubmit={event=>{event.preventDefault();send();}}><textarea bind:this={composer} bind:value={input} disabled={chatBusy} rows="3" maxlength="20000" aria-label="Chat with Cadence" placeholder="What needs doing?" onkeydown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey){event.preventDefault();send();}}}></textarea><div class="composer-bottom"><span>Enter to send</span><button class="send-button" type="submit" disabled={chatBusy||busy||!input.trim()} aria-label="Send message">↑</button></div></form></div></aside>
 </div>
 
+{#if whatsNewOpen}<WhatsNew since={whatsNewSince} onclose={closeWhatsNew} />{/if}
+
 {#if newTaskOpen}
   <NewTaskForm knownLabels={labels.map(([label]) => label)} {busy} error={newTaskError} oncreate={createTask} oncancel={() => newTaskOpen = false} onchat={text => { newTaskOpen = false; selectedId = null; compose(text); }} />
 {/if}
@@ -736,6 +753,7 @@
         <div class="update-actions">
           {#if updateInfo?.available && updateInfo.canInstall}<button class="primary-button save-settings" disabled={Boolean(updateBusy)} onclick={installUpdate}>{updateBusy === 'installing' ? 'Installing…' : 'Install & restart'}<span>↓</span></button>{/if}
           <button class="secondary-button" disabled={Boolean(updateBusy) || browserPreview} onclick={checkForUpdates}>{updateBusy === 'checking' ? 'Checking…' : 'Check for updates'}</button>
+          <button class="text-button" onclick={() => { settingsOpen = false; openWhatsNew(); }}>See what’s new</button>
         </div>
       </div>
     {:else if settingsTab === 'sync'}
