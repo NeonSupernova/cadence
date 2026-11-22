@@ -34,3 +34,36 @@ export type Assessment = { estimate: Estimate; predictedMinutes: number; remaini
 export type PlanBlock = { taskId: number; minutes: number; units: number; partial: boolean };
 export type CapacityDay = { date: string; weekday: number; minutes: number; energy: number; capacityUnits: number; spentMinutes: number; spentUnits: number; remainingMinutes: number; remainingUnits: number; blocks: PlanBlock[]; learnedFactor: number };
 export type Workload = { profile: { weekdayMinutes: number[]; learningEnabled: boolean }; calibration: { timeSamples: number; effortSamples: number; daySamples: number; timeCoefficients: number[]; loadWeights: number[]; weekdayFactors: number[]; uncertainty: number; stage: string }; assessments: Record<number, Assessment>; days: CapacityDay[]; riskIds: number[]; nextTaskId: number | null };
+export type BadgeMode = 'off' | 'overdue' | 'due_today';
+export type TrayTitle = 'none' | 'timer' | 'due' | 'both';
+export type Repeat = 'none' | 'hourly' | 'daily' | 'weekdays' | 'weekly';
+export type AlertSettings = {
+  enabled: boolean; dueAlerts: boolean; leadMinutes: number[]; allDayTime: string; overdueDaily: boolean; minPriority: number;
+  reminders: boolean; sound: boolean; quietHours: boolean; quietStart: string; quietEnd: string; pausedUntil: string | null;
+  badge: BadgeMode; trayTitle: TrayTitle; dockProgress: boolean; keepRunning: boolean;
+};
+export type Reminder = { id: string; taskId: number | null; title: string; note: string; at: string; repeat: Repeat; enabled: boolean; lastFiredAt: string | null };
+export type ReminderInput = { id?: string | null; taskId: number | null; title: string; note: string; at: string; repeat: Repeat; enabled: boolean };
+export type AlertsView = { settings: AlertSettings; reminders: Reminder[]; platform: 'macos' | 'windows' | 'linux' };
+export const defaultAlerts = (): AlertsView => ({
+  platform: 'macos', reminders: [],
+  settings: { enabled: true, dueAlerts: true, leadMinutes: [1440, 60, 0], allDayTime: '09:00', overdueDaily: true, minPriority: 0, reminders: true, sound: true, quietHours: false, quietStart: '22:00', quietEnd: '08:00', pausedUntil: null, badge: 'due_today', trayTitle: 'timer', dockProgress: true, keepRunning: true },
+});
+export const repeatLabels: Record<Repeat, string> = { none: 'Once', hourly: 'Every hour', daily: 'Every day', weekdays: 'Every weekday', weekly: 'Every week' };
+/** RFC 3339 with the local offset, from a `datetime-local` value. */
+export const localToIso = (value: string) => { const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toISOString(); };
+/** A `datetime-local` value for a Date, in local time. */
+export const isoToLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+export const reminderWhen = (iso: string) => {
+  const d = new Date(iso), now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Today ${time}`;
+  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
+  return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${time}`;
+};
+export type TaskDraft = { title: string; description: string; taskType: string; labels: string[]; priority: number; dueDate: string | null; estimateMinutes: number | null };
+/** Mirrors `TYPES` in core/src/model.rs. */
+export const taskTypes: [string, string][] = [['chore', 'Chore'], ['feature', 'Feature'], ['bug', 'Bug'], ['research', 'Research'], ['meeting', 'Meeting'], ['personal', 'Personal'], ['assignment', 'Assignment']];
+/** Mirrors `LABELS` in core/src/model.rs. */
+export const starterLabels = ['work', 'school', 'coding', 'writing', 'planning', 'finance', 'health', 'home', 'urgent', 'blocked', 'quick-win'];

@@ -1,4 +1,4 @@
-//! Read-only Canvas integration. Credentials never enter task/model context.
+//! Canvas assignment importer and connection settings. Credentials never enter task/model context.
 use chrono::{Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, io::Write, path::Path, process::Stdio};
@@ -305,7 +305,7 @@ pub fn parse_http(output: &str) -> Result<Page, String> {
         .rsplit_once('\n')
         .ok_or("Canvas returned an invalid response.")?;
     match status.trim() {
-        "200" => {}
+        "200" | "201" | "202" | "204" => {}
         "401" => {
             return Err(
                 "Canvas rejected the token. Generate a new token in Canvas Account → Settings."

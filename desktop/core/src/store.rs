@@ -395,6 +395,47 @@ impl Store {
             demo,
         })
     }
+    /// Creates a task from the manual form, without the assistant or Jev.
+    pub fn create_task(&mut self, draft: TaskDraft) -> Result<Vec<i64>, String> {
+        let kind = if draft.task_type.trim().is_empty() { "chore".to_string() } else { draft.task_type.trim().to_string() };
+        let estimate = draft.estimate_minutes.map(|minutes| crate::workload::Estimate {
+            minutes,
+            technical: 3,
+            tedium: 3,
+            ambiguity: 3,
+            switching: 3,
+            source: "user".into(),
+        });
+        let classification = Classification {
+            kind: kind.clone(),
+            labels: draft.labels.clone(),
+            priority: draft.priority.min(100),
+            confidence: 1.0,
+            estimate: estimate.clone(),
+        };
+        let due_date = draft.due_date.filter(|d| !d.trim().is_empty());
+        self.apply(
+            Plan {
+                reply: String::new(),
+                actions: vec![Action {
+                    kind: "create".into(),
+                    title: Some(draft.title),
+                    description: Some(draft.description),
+                    labels: Some(draft.labels),
+                    task_type: Some(kind),
+                    priority: Some(draft.priority.min(100)),
+                    due_date,
+                    estimate,
+                    ..Action::status("create", 0)
+                }
+                .without_ids()],
+                ..Default::default()
+            },
+            "",
+            Some(&classification),
+            false,
+        )
+    }
     pub fn apply(
         &mut self,
         plan: Plan,
@@ -664,7 +705,8 @@ impl Store {
                     task.labels.push("canvas".into());
                 }
                 if action.kind == "create" {
-                    if task.description.trim().is_empty() {
+                    // The assistant must explain the outcome; a manually typed task may be just a title.
+                    if record_chat && task.description.trim().is_empty() {
                         return Err(
                             "Describe the intended outcome before creating this task.".into()
                         );

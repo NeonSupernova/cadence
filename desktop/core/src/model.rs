@@ -374,7 +374,23 @@ pub struct Action {
     #[serde(default)]
     pub entry_index: Option<usize>,
 }
+/// Fields of the manual "New task" form.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TaskDraft {
+    pub title: String,
+    pub description: String,
+    pub task_type: String,
+    pub labels: Vec<String>,
+    pub priority: u8,
+    pub due_date: Option<String>,
+    pub estimate_minutes: Option<u32>,
+}
 impl Action {
+    pub(crate) fn without_ids(mut self) -> Self {
+        self.task_ids.clear();
+        self
+    }
     pub fn status(kind: &str, id: i64) -> Self {
         Self {
             kind: kind.into(),

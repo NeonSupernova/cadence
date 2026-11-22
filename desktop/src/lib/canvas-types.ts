@@ -1,0 +1,27 @@
+export type CanvasItem = {
+  id: number; name?: string; title?: string; course_code?: string; course_id?: number;
+  html_url?: string; url?: string; page_url?: string; type?: string; content_id?: number;
+  description_text?: string; body_text?: string; message_text?: string; syllabus_body_text?: string;
+  description?: string; body?: string; message?: string; syllabus_body?: string;
+  due_at?: string | null; unlock_at?: string | null; lock_at?: string | null;
+  created_at?: string; updated_at?: string; submitted_at?: string; last_message_at?: string;
+  submission_types?: string[]; allowed_extensions?: string[]; allowed_attempts?: number;
+  points_possible?: number; locked_for_user?: boolean; lock_explanation_text?: string;
+  submission?: CanvasItem; workflow_state?: string; attempt?: number; extra_attempts?: number; grade?: string; score?: number | null;
+  late?: boolean; missing?: boolean; excused?: boolean; published?: boolean;
+  rubric?: { id: string; description: string; long_description?: string; points: number; ratings?: {description: string; points: number}[] }[];
+  rubric_assessment?: Record<string, {points: number; comments?: string}>;
+  submission_comments?: { id: number; author_name: string; comment: string; created_at: string; attachments?: CanvasItem[] }[];
+  submission_history?: CanvasItem[]; attachments?: CanvasItem[]; display_name?: string; filename?: string; size?: number;
+  items_count?: number; completion_requirement?: { type: string; completed: boolean };
+  content_details?: { locked_for_user?: boolean; due_at?: string };
+  subject?: string; last_message?: string; messages?: CanvasItem[]; author_id?: number;
+  participants?: { id: number; name?: string; display_name?: string }[];
+  view?: CanvasItem[]; replies?: CanvasItem[]; user_id?: number; user_name?: string;
+  permissions?: { reply?: boolean }; locked?: boolean; subscribed?: boolean;
+  enrollments?: { type: string; computed_current_score?: number; computed_current_grade?: string }[];
+  assignment?: CanvasItem; quiz_type?: string; time_limit?: number; start_at?: string;
+  group_category_id?: number; position?: number; hidden?: boolean; label?: string;
+};
+export type CanvasTarget = { courseId: number; assignmentId: number; baseUrl: string };
+export type CanvasMutationResult = { result: CanvasItem; syncWarning: string | null };

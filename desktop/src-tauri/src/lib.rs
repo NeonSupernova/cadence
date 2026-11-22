@@ -10,6 +10,11 @@ mod canvas_integration;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(desktop)]
+mod notifications;
+#[cfg(desktop)]
+mod status_bar;
+mod telemetry;
+#[cfg(desktop)]
 mod updater;
 mod workload_integration;
 
@@ -29,8 +34,8 @@ fn task_context_menu(app: tauri::AppHandle, id: i64, demo: bool) -> Result<(), S
 }
 #[tauri::command]
 fn show_main(app: tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
-    macos::show_main(&app);
+    #[cfg(desktop)]
+    status_bar::show_main(&app);
 }
 #[tauri::command]
 fn dismiss_capture(app: tauri::AppHandle) {
@@ -200,6 +205,19 @@ fn change_tasks(
     snapshot(&state.data_dir, request, focus)
 }
 #[tauri::command]
+fn create_task(
+    state: State<'_, AppState>,
+    request: Request,
+    draft: jev_tasks_core::TaskDraft,
+) -> Result<Snapshot, String> {
+    let _guard = state
+        .gate
+        .try_lock()
+        .map_err(|_| "Please wait for the current task operation to finish.")?;
+    let focus = database(&state.data_dir, request.demo)?.create_task(draft)?;
+    snapshot(&state.data_dir, request, focus)
+}
+#[tauri::command]
 async fn chat(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -330,9 +348,17 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             macos::setup(app.handle())?;
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_notification::init())?;
+                app.manage(notifications::AlertsState::default());
+                status_bar::setup(app.handle())?;
+                notifications::start(app.handle());
+            }
             canvas_integration::start_background(app.handle());
             #[cfg(desktop)]
             {
+                app.manage(updater::UpdaterState::default());
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
                 updater::start_background(app.handle());
@@ -340,15 +366,26 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
+            #[cfg(desktop)]
+            if status_bar::handle_menu(app, event.id().as_ref()) {
+                return;
+            }
             #[cfg(target_os = "macos")]
             macos::handle_menu(app, event.id().as_ref());
         })
         .on_window_event(|window, event| {
-            #[cfg(target_os = "macos")]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // A normal macOS app remains in the Dock; clicking its icon reopens it.
-                api.prevent_close();
-                let _ = window.hide();
+                #[cfg(target_os = "macos")]
+                let keep = true;
+                // Elsewhere, staying in the tray keeps reminders and due alerts arriving.
+                #[cfg(not(target_os = "macos"))]
+                let keep = window.label() == "main"
+                    && jev_tasks_core::alerts::load_settings(&window.state::<AppState>().data_dir).keep_running;
+                if keep || window.label() == "capture" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -356,6 +393,7 @@ pub fn run() {
             get_settings,
             save_settings,
             change_tasks,
+            create_task,
             chat,
             get_appearance,
             quick_capture,
@@ -367,6 +405,9 @@ pub fn run() {
             canvas_integration::save_canvas_settings,
             canvas_integration::sync_canvas,
             canvas_integration::open_canvas_assignment,
+            canvas_integration::canvas_workspace_query,
+            canvas_integration::canvas_workspace_action,
+            canvas_integration::open_canvas_link,
             workload_integration::save_task_estimate,
             workload_integration::open_task_reference,
             workload_integration::save_capacity_profile,
@@ -374,6 +415,18 @@ pub fn run() {
             workload_integration::rate_task_effort,
             workload_integration::review_capacity_day,
             workload_integration::assess_task_effort
+            ,telemetry::get_telemetry_settings
+            ,telemetry::save_telemetry_settings
+            ,telemetry::capture_usage_event
+            ,telemetry::submit_feedback
+            ,updater::get_update_status
+            ,updater::check_for_updates
+            ,notifications::get_alerts
+            ,notifications::save_alert_settings
+            ,notifications::pause_alerts
+            ,notifications::save_reminder
+            ,notifications::delete_reminder
+            ,notifications::test_notification
         ])
         .build(tauri::generate_context!())
         .expect("Could not start Cadence")
@@ -383,9 +436,9 @@ pub fn run() {
                     .canvas_stop
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(desktop)]
             if matches!(&event, tauri::RunEvent::Exit) {
-                app.state::<macos::NativeState>()
+                app.state::<status_bar::StatusState>()
                     .stop
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }

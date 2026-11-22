@@ -1,5 +1,7 @@
 pub mod ai;
+pub mod alerts;
 pub mod canvas;
+pub mod canvas_workspace;
 pub mod model;
 pub mod store;
 pub mod workload;

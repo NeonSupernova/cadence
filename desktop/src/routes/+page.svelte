@@ -2,8 +2,13 @@
   import { onMount, tick } from 'svelte';
   import { invoke, desktop, progress, listen } from '$lib/bridge';
   import { preview } from '$lib/preview';
-  import { defaultView, reference } from '$lib/types';
-  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization } from '$lib/types';
+  import { defaultView, reference, defaultAlerts } from '$lib/types';
+  import CanvasWorkspace from '$lib/CanvasWorkspace.svelte';
+  import AlertSettings from '$lib/AlertSettings.svelte';
+  import TaskReminders from '$lib/TaskReminders.svelte';
+  import NewTaskForm from '$lib/NewTaskForm.svelte';
+  import type { CanvasTarget } from '$lib/canvas-types';
+  import type { Snapshot, Settings, Task, View, CanvasSettings, CanvasReport, Estimate, Organization, AlertsView, TaskDraft } from '$lib/types';
 
   let data = $state<Snapshot | null>(null);
   let clock = $state(Date.now());
@@ -36,7 +41,9 @@
   let demo = $state(false);
   let browserPreview = $state(false);
   let settingsOpen = $state(false);
-  let settingsTab = $state<'assistant' | 'canvas'>('assistant');
+  let settingsTab = $state<'assistant' | 'canvas' | 'alerts'>('assistant');
+  let alerts = $state<AlertsView>(defaultAlerts());
+  async function refreshAlerts() { if (browserPreview) return; try { alerts = await invoke<AlertsView>('get_alerts'); } catch { /* alerts are optional; settings shows errors on save */ } }
   let canvas = $state<CanvasSettings>({ baseUrl: 'https://pcci.instructure.com', configured: false, autoSync: true, report: null, error: null });
   let canvasFormUrl = $state('https://pcci.instructure.com');
   let canvasFormToken = $state('');
@@ -48,7 +55,15 @@
   let canvasCount = $derived(data?.tasks.filter(t => t.canvas && !t.deleted && t.status !== 'done').length || 0);
   async function refreshCanvas() { if (browserPreview) return; try { canvas = await invoke<CanvasSettings>('get_canvas_settings'); if (canvas.error && !canvasNotice) canvasNotice = canvas.error; } catch (e) { canvasSettingsError = String(e); } }
   function openCanvasSettings() { void openSettings(); settingsTab = 'canvas'; }
-  function showCanvas() { if (busy) return; if (!canvas.configured) { openCanvasSettings(); return; } demo = false; selectedId = null; navigate('all', 'canvas'); }
+  let canvasTarget = $state<CanvasTarget | null>(null);
+  let canvasWorkspaceVersion = $state(0);
+  function showCanvas(task?: Task) {
+    if (busy) return;
+    if (!canvas.configured && !browserPreview) { openCanvasSettings(); return; }
+    if (!browserPreview && demo) { demo = false; void refresh(); }
+    canvasTarget = task?.canvas ? {courseId:task.canvas.courseId,assignmentId:task.canvas.assignmentId,baseUrl:task.canvas.baseUrl} : null;
+    canvasWorkspaceVersion += 1; selectedId = null; screen = 'canvas';
+  }
   async function syncCanvas() {
     if (canvasBusy || browserPreview) return;
     if (!canvas.configured) { openCanvasSettings(); return; }
@@ -75,7 +90,7 @@
   let settingsError = $state('');
   let chatEnd: HTMLDivElement;
   let composer: HTMLTextAreaElement;
-  let screen = $state<'now' | 'next' | 'journal' | 'week'>('now');
+  let screen = $state<'now' | 'next' | 'journal' | 'week' | 'canvas'>('now');
   let chatOpen = $state(false);
   let feedbackTaskId = $state<number | null>(null);
   let notice = $state('');
@@ -146,6 +161,19 @@
     try{await invoke('open_task_reference',{request:request(),id,index});}catch(e){error=String(e);}
   }
   function createGuided(){selectedId=null;compose('Walk me through creating a task.');}
+  let newTaskOpen = $state(false);
+  let newTaskError = $state('');
+  function openNewTask(){newTaskError='';newTaskOpen=true;settingsOpen=false;}
+  async function createTask(draft: TaskDraft){
+    if(busy)return;
+    if(browserPreview){newTaskError='This is a visual preview. Open the desktop app to save tasks.';return;}
+    busy=true;newTaskError='';
+    try{
+      const snapshot=await invoke<Snapshot>('create_task',{request:request(),draft});
+      accept(snapshot);newTaskOpen=false;chatOpen=false;
+      if(snapshot.focusIds[0])notice=`${reference(snapshot.focusIds[0])} created.`;
+    }catch(e){newTaskError=String(e);}finally{busy=false;}
+  }
   function inspect(id:number) { selectedId=id; chatOpen=false; }
   function openChat() { chatOpen=true; tick().then(()=>composer?.focus()); }
   async function workloadUpdate(command:string,args:Record<string,unknown>) {
@@ -193,10 +221,18 @@
   async function captureWindow() { if (browserPreview) { compose('I need to '); return; } try { await invoke('quick_capture'); } catch (e) { error = String(e); } }
   async function taskMenu(event: MouseEvent, task: Task) { event.preventDefault(); selectedId = task.id; if (!browserPreview) { try { await invoke('task_context_menu', { id: task.id, demo }); } catch (e) { error = String(e); } } }
   async function nativeAction(event: { action: string; id?: number; demo?: boolean }) {
+    // The status item and notifications always refer to the real workspace.
+    if (event.action === 'due-view' || event.action === 'inspect') {
+      if (demo) { demo = false; view = defaultView(); }
+      settingsOpen = false;
+      if (event.action === 'due-view') navigate('today');
+      else if (event.id) { await refresh(); screen = 'next'; inspect(event.id); }
+      return;
+    }
     if (event.demo !== undefined && event.demo !== demo) return;
     switch (event.action) {
       case 'settings': await openSettings(); break;
-      case 'new-task': createGuided(); break;
+      case 'new-task': openNewTask(); break;
       case 'find-task': screen = 'next'; await tick(); searchField?.focus(); break;
       case 'focus-view': screen = 'now'; break;
       case 'next-view': navigate('open'); break;
@@ -285,7 +321,7 @@
   onMount(() => {
     browserPreview = !desktop();
     if (browserPreview) { data = preview(); demo = true; }
-    else { refresh(); refreshCanvas(); }
+    else { refresh(); refreshCanvas(); refreshAlerts(); }
     const syncAppearance = async () => {
       if (!desktop()) return;
       try {
@@ -312,13 +348,18 @@
         if (event.error) { canvas.error = event.error; canvasNotice = event.error; }
       }),
       listen('appearance-changed', syncAppearance),
+      listen('alerts-changed', refreshAlerts),
       listen<{ demo?: boolean; reason?: string }>('tasks-changed', event => {
         if (event.demo !== undefined && event.demo !== demo) return;
         if (event.reason === 'sleep') nativeNote = 'Focus paused when your Mac went to sleep. Resume when you’re ready.';
         if (!busy) refresh();
       }),
     ]) pending.then(fn => disposed ? fn() : nativeListeners.push(fn));
-    const shortcut = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key === 'k') { event.preventDefault(); openChat(); } };
+    const shortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'k') { event.preventDefault(); openChat(); }
+      // macOS gets ⌘N from the native File menu; other platforms have no app menu.
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'n' && document.documentElement.dataset.macos !== 'true') { event.preventDefault(); openNewTask(); }
+    };
     window.addEventListener('keydown', shortcut);
     return () => { window.clearInterval(timerTick); window.clearInterval(capacityPoll); nativeListeners.forEach(fn => fn()); window.removeEventListener('focus', onFocus); disposed = true; unlisten?.(); window.removeEventListener('keydown', shortcut); };
   });
@@ -329,7 +370,8 @@
 <div class="app-shell" class:with-drawer={chatOpen}>
   <aside class="sidebar">
     <button class="brand" onclick={() => screen='now'}><img src="/favicon.png" alt="" /><span>Cadence</span></button>
-    <button class="capture-sidebar" onclick={createGuided}>＋ <span>Create with chat</span><kbd>⌘N</kbd></button>
+    <button class="capture-sidebar" onclick={openNewTask}>＋ <span>New task</span><kbd>⌘N</kbd></button>
+    <button class="capture-sidebar capture-chat" onclick={createGuided}>✧ <span>Create with chat</span><kbd>⌘K</kbd></button>
     <nav aria-label="Workspace">
       <button class:active={screen==='now'} onclick={() => screen='now'}><span>◉</span>Today<kbd>⌘1</kbd></button>
       <button class:active={screen==='next'} onclick={() => navigate('open')}><span>▤</span>All tasks<kbd>⌘2</kbd></button>
@@ -337,17 +379,18 @@
       <button class:active={screen==='journal'} onclick={() => screen='journal'}><span>◷</span>Focus journal<kbd>⌘3</kbd></button>
     </nav>
     <div class="nav-label">CONNECTED</div>
-    <div class="canvas-sidebar"><button disabled={busy} onclick={showCanvas}><span class="canvas-glyph">◉</span><span>Canvas<small>{canvasBusy?'Syncing…':canvas.error?'Needs attention':canvas.configured?`${canvasCount} remaining`:'Connect courses'}</small></span></button><button disabled={canvasBusy||browserPreview} onclick={syncCanvas} aria-label="Sync Canvas">↻</button></div>
+    <div class="canvas-sidebar"><button class:active={screen==='canvas'} disabled={busy} onclick={()=>showCanvas()}><span class="canvas-glyph">◉</span><span>Canvas<small>{canvasBusy?'Syncing…':canvas.error?'Needs attention':canvas.configured?`${canvasCount} remaining`:'Connect courses'}</small></span></button><button disabled={canvasBusy||browserPreview} onclick={syncCanvas} aria-label="Sync Canvas">↻</button></div>
     <details class="labels-disclosure"><summary>Labels <span>{labels.length}</span></summary>{#each labels as [label,count]}<button onclick={() => navigate('all',label)}><span class="label-dot"></span>{label}<small>{count}</small></button>{/each}</details>
     <div class="sidebar-bottom"><button class="utility" onclick={() => navigate('done')}>✓ Completed<span>{data?.stats.completed || 0}</span></button><button class="utility" onclick={() => navigate('deleted')}>♧ Trash</button><button class="utility" onclick={openSettings}>⚙ Connections</button><div class="local-workspace"><span class="online-dot"></span>Saved on this Mac</div></div>
   </aside>
   <main>
-    <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>⌘K</kbd></button></div></header>
+    <header class="topbar" data-tauri-drag-region><span data-tauri-drag-region>{screen==='canvas'?'Canvas':screen==='now'?'Today':screen==='week'?'Capacity':screen==='journal'?'Focus journal':title}</span><div>{#if chatBusy}<span class="assistant-status">Assistant working · {Math.max(0,Math.floor((clock-chatStarted)/1000))}s</span>{/if}{#if demo}<span class="demo-pill">{browserPreview?'Visual preview':'Demo'}</span>{/if}<button disabled={busy} onclick={toggleDemo}>{demo?'My tasks':'Demo'}</button><button class="chat-toggle" onclick={openChat}>Conversation <kbd>⌘K</kbd></button></div></header>
     <div class="main-content">
-      <div class="page-heading"><div><p class="eyebrow">{new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</p><h1>{screen==='now'?'A plan that fits your day':screen==='week'?'Your week, at your pace':screen==='journal'?'Your focus journal':title}</h1><p>{screen==='now'?'Time and effort are both limited. This plan respects both.':screen==='week'?'Start with your schedule. Let real work refine it.':screen==='journal'?'Recorded work, session by session.':'Inspect an estimate, adjust it, or start a focused block.'}</p></div><button class="primary-button" onclick={captureWindow}>＋ Capture</button></div>
+      <div class="page-heading"><div><p class="eyebrow">{new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</p><h1>{screen==='canvas'?'Your courses, in Cadence':screen==='now'?'A plan that fits your day':screen==='week'?'Your week, at your pace':screen==='journal'?'Your focus journal':title}</h1><p>{screen==='canvas'?'Coursework, submissions, and conversations in one place.':screen==='now'?'Time and effort are both limited. This plan respects both.':screen==='week'?'Start with your schedule. Let real work refine it.':screen==='journal'?'Recorded work, session by session.':'Inspect an estimate, adjust it, or start a focused block.'}</p></div><button class="primary-button" onclick={captureWindow}>＋ Capture</button></div>
       {#if error}<div class="error-banner" role="alert">{error}<button onclick={() => error=''} aria-label="Dismiss error">×</button></div>{/if}
       {#if notice || nativeNote || canvasNotice}<div class="notice" role="status">{notice || nativeNote || canvasNotice}<button onclick={() => {notice='';nativeNote='';canvasNotice='';}} aria-label="Dismiss status">×</button></div>{/if}
       {#if feedbackTaskId}<div class="completion-feedback"><strong>Task finished. How demanding did it feel?</strong><div><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,1)}>Lighter</button><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,3)}>As expected</button><button disabled={busy} onclick={() => rateEffort(feedbackTaskId!,5)}>Draining</button><button class="text-button" onclick={() => feedbackTaskId=null}>Later</button></div></div>{/if}
+      {#if screen==='canvas'}{#key canvasWorkspaceVersion}<CanvasWorkspace baseUrl={canvas.baseUrl} preview={browserPreview} initial={canvasTarget} onsubmitted={()=>refresh()} onsettings={openCanvasSettings}/>{/key}{/if}
       {#if screen==='now' && day}
         <section class="capacity-summary"><div><span class="section-kicker">TODAY’S CAPACITY</span><h2>{mins(day.remainingMinutes)} <small>and</small> {wu(day.remainingUnits)} <small>WU left</small></h2><p>{mins(day.spentMinutes)} tracked · {wu(day.spentUnits)} WU used · {day.energy<=2?'Lower energy':day.energy>=4?'Higher energy':'Usual energy'}</p></div><button class="secondary-button" onclick={() => budgetOpen=!budgetOpen}>Adjust today</button></section>
         {#if budgetOpen}<form class="today-checkin" onsubmit={event=>{event.preventDefault();saveDay();}}><label>Focused minutes available today<input type="number" min="0" max="720" step="1" required bind:value={dayMinutes} oninput={()=>dayDirty=true}/></label><label>Energy today<select bind:value={dayEnergy} onchange={()=>dayDirty=true}><option value={1}>Low</option><option value={3}>Usual</option><option value={5}>High</option></select></label><button class="primary-button" disabled={busy}>Update plan</button><p>Total daily budget, including time already tracked.</p></form>{/if}
@@ -373,6 +416,7 @@
   {#if selected && !chatOpen}{@const a=assessment(selected.id)}<div class="task-card-backdrop" role="presentation"><div class="inspector task-card" use:focusCard role="dialog" aria-modal="true" aria-label={selected.title} tabindex="-1" onkeydown={event=>{if(event.key==='Escape')selectedId=null;}}><header><span>{reference(selected.id)}</span><button onclick={()=>selectedId=null} aria-label="Close inspector">×</button></header><div class="inspector-content"><span class="section-kicker">{selected.organization?.role || 'task'} · {statusName(selected.status)}</span><h2>{selected.title}</h2>{#if error}<p class="card-error" role="alert">{error}</p>{/if}<nav class="card-tabs"><button class:active={cardSection==='overview'} onclick={()=>cardSection='overview'}>Overview</button><button class:active={cardSection==='links'} onclick={()=>cardSection='links'}>Links & planning</button>{#if (selected.organization?.role || 'task')==='task'}<button class:active={cardSection==='effort'} onclick={()=>cardSection='effort'}>Effort & time</button>{/if}</nav>{#if cardSection==='overview'}<p class="detail-description">{selected.description || 'No description yet.'}</p><div class="work-tags">{#each selected.labels as label}<button class={`label-pill label-${label}`} onclick={()=>navigate('all',label)}>{label}</button>{/each}</div><div class="inspector-actions">{#if selected.deleted}<button class="secondary-button" disabled={busy} onclick={()=>mutate('restore',selected.id)}>Restore</button>{:else if selected.status==='done'}<button class="secondary-button" disabled={busy} onclick={()=>mutate('reopen',selected.id)}>Reopen</button>{:else}{#if (selected.organization?.role || 'task')==='task'}<button class="primary-button" disabled={busy} onclick={()=>mutate(selected.timerStartedAt?'pause':'start',selected.id)}>{selected.timerStartedAt?'Ⅱ Pause':'▷ Start'}</button>{/if}<button class="secondary-button" disabled={busy} onclick={()=>mutate('complete',selected.id)}>✓ Complete</button>{/if}<button class="text-button" onclick={()=>compose(`Update ${reference(selected.id)}: `)}>Edit in chat</button></div>
 {#each selected.organization?.external || [] as link,i}<button class="linked-item" onclick={()=>openReference(selected.id,i)}><span>{link.provider}</span>{link.remoteId} ↗</button>{/each}
 <section class="linked-summary"><h3>Connected work</h3>{#each [selected.organization?.parentId,selected.organization?.milestoneId,selected.organization?.cycleId,...(selected.organization?.relatedIds || []),...(data?.tasks.filter(t=>!t.deleted&&t.id!==selected.id&&(t.organization?.parentId===selected.id||t.organization?.milestoneId===selected.id||t.organization?.cycleId===selected.id||t.organization?.relatedIds.includes(selected.id))).map(t=>t.id)||[])] .filter((id):id is number=>Boolean(id)).filter((id,i,ids)=>ids.indexOf(id)===i) as id}<button class="linked-item" onclick={()=>inspect(id)}><span>{reference(id)}</span>{data?.tasks.find(t=>t.id===id)?.title || 'Unavailable item'} →</button>{/each}<button class="text-button" onclick={()=>cardSection='links'}>Add or change links →</button></section>
+{#if !selected.deleted && selected.status!=='done'}<TaskReminders task={selected} {alerts} unavailable={browserPreview ? 'Open the desktop app to set reminders.' : demo ? 'Reminders work in your real workspace, not the demo.' : ''} onchange={view => alerts = view} />{/if}
       {:else if cardSection==='links'}
       <form class="organization-editor" onsubmit={event=>{event.preventDefault();saveOrganization();}}><p>Only add the structure that helps. External references link to other trackers; they do not sync yet.</p><label>Item role<select bind:value={organizationDraft.role} onchange={()=>organizationDirty=true}>{#each ['task','epic','milestone','sprint','iteration'] as role}<option value={role}>{role}</option>{/each}</select></label>
       {#each [{key:'parentId',label:'Part of epic',roles:['epic']},{key:'milestoneId',label:'Target milestone',roles:['milestone']},{key:'cycleId',label:'Sprint or iteration',roles:['sprint','iteration']}] as field}<label>{field.label}<select bind:value={organizationDraft[field.key as 'parentId'|'milestoneId'|'cycleId']} onchange={()=>organizationDirty=true}><option value={null}>None</option>{#each data?.tasks.filter(t=>t.id!==selected.id&&!t.deleted&&field.roles.includes(t.organization?.role || 'task')) || [] as target}<option value={target.id}>{reference(target.id)} · {target.title}</option>{/each}</select></label>{/each}
@@ -410,27 +454,33 @@
         {/if}
         {#if selected.status==='done'}<p>How demanding did this feel?</p><label class="actual-time-label">Actual focused minutes <small>Optional calibration value · does not change recorded work</small><input type="number" min="5" max="960" step="1" bind:value={actualDraft} placeholder="Use tracked time" /></label><div class="rating-buttons"><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,1)}>Lighter</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,3)}>As expected</button><button disabled={busy||!data?.workload.profile.learningEnabled} onclick={()=>rateEffort(selected.id,5)}>Draining</button></div>{/if}
       </section>
-      {/if}{#if selected.canvas}<section class="canvas-assignment"><strong>{selected.canvas.courseCode}</strong><p>{selected.canvas.dueAt?`Canvas deadline: ${new Date(selected.canvas.dueAt).toLocaleString()}`:'No Canvas deadline'}</p><button onclick={()=>openCanvasTask(selected)}>Open assignment in Canvas ↗</button><small>Local completion never submits coursework.</small></section>{/if}<button class="delete-action" disabled={busy||selected.deleted} onclick={()=>mutate('delete',selected.id)}>Move to Trash</button></div></div></div>{/if}
+      {/if}{#if selected.canvas}<section class="canvas-assignment"><strong>{selected.canvas.courseCode}</strong><p>{selected.canvas.dueAt?`Canvas deadline: ${new Date(selected.canvas.dueAt).toLocaleString()}`:'No Canvas deadline'}</p><button onclick={()=>showCanvas(selected)}>View & submit coursework →</button><button onclick={()=>openCanvasTask(selected)}>Open assignment in Canvas ↗</button><small>Local completion never submits coursework.</small></section>{/if}<button class="delete-action" disabled={busy||selected.deleted} onclick={()=>mutate('delete',selected.id)}>Move to Trash</button></div></div></div>{/if}
   <aside class="chat-panel" hidden={!chatOpen}><header class="chat-header" data-tauri-drag-region><div><strong>Conversation</strong><small>Capture, plan, and adjust.</small></div><button onclick={()=>chatOpen=false} aria-label="Close conversation">×</button></header><div class="chat-messages" aria-live="polite" aria-busy={chatBusy}>{#if !data?.messages.length}<div class="chat-welcome"><h2>Plan in your own words.</h2><p>Start with what you want to accomplish. I’ll help clarify the scope, suggest labels, and write a useful description.<br/>Try “Help me create a task for my project.”</p></div>{/if}{#each data?.messages || [] as message (message.id)}<div class={`message ${message.role}`}><div class="message-author">{message.role==='user'?'YOU':'CADENCE'}</div><div class="message-content">{message.content}</div>{#if message.taskIds.length}<div class="message-refs">{#each message.taskIds as id}<button onclick={()=>inspect(id)}>{reference(id)} ↗</button>{/each}</div>{/if}</div>{/each}{#if pending}<div class="message user"><div class="message-author">YOU</div><div class="message-content">{pending}</div></div>{/if}{#if chatBusy}<div class="thinking">{phase} {Math.max(0,Math.floor((clock-chatStarted)/1000))}s{#if clock-chatStarted>15000}<p>The assistant is still working. You can keep using your tasks.</p>{/if}</div>{/if}<div bind:this={chatEnd}></div></div><div class="chat-compose-area">{#if selected}<div class="context-chip">About {reference(selected.id)}<button onclick={()=>selectedId=null} aria-label="Clear task context">×</button></div>{/if}{#if !data?.configured}<button class="connect-banner" onclick={openSettings}>Connect OpenRouter to use chat →</button>{/if}<form class="composer" onsubmit={event=>{event.preventDefault();send();}}><textarea bind:this={composer} bind:value={input} disabled={chatBusy} rows="3" maxlength="20000" aria-label="Chat with Cadence" placeholder="What needs doing?" onkeydown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey){event.preventDefault();send();}}}></textarea><div class="composer-bottom"><span>Enter to send</span><button class="send-button" type="submit" disabled={chatBusy||busy||!input.trim()} aria-label="Send message">↑</button></div></form></div></aside>
 </div>
+
+{#if newTaskOpen}
+  <NewTaskForm knownLabels={labels.map(([label]) => label)} {busy} error={newTaskError} oncreate={createTask} oncancel={() => newTaskOpen = false} onchat={text => { newTaskOpen = false; selectedId = null; compose(text); }} />
+{/if}
 
 {#if settingsOpen}
   <div class="modal-backdrop" role="presentation"><div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
     <div class="modal-title"><span class="assistant-mark">✧</span><button aria-label="Close settings" onclick={() => settingsOpen = false}>×</button></div>
     <h2 id="settings-title">Connections</h2><p>Your assistant, your coursework, one place to focus.</p>
-    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button></div>
+    <div class="connection-tabs"><button class:chosen={settingsTab === 'assistant'} onclick={() => settingsTab = 'assistant'}>Assistant</button><button class:chosen={settingsTab === 'canvas'} onclick={() => settingsTab = 'canvas'}>Canvas</button><button class:chosen={settingsTab === 'alerts'} onclick={() => { settingsTab = 'alerts'; refreshAlerts(); }}>Alerts</button></div>
     {#if settingsTab === 'assistant'}
       <form onsubmit={(event) => { event.preventDefault(); saveSettings(); }}><label>OpenRouter API key<input type="password" bind:value={apiKey} autocomplete="off" placeholder={settings.configured ? 'Connected · leave blank to keep your key' : 'sk-or-…'} /></label><label>Writing & reasoning model<input bind:value={settings.model} placeholder="google/gemini-2.5-flash" /></label><label>Jev model<input bind:value={settings.jevModel} /></label><label>Reasoning effort<select bind:value={settings.reasoningEffort}><option value="minimal">Minimal · quickest</option><option value="low">Low · fast and thoughtful</option><option value="medium">Medium</option><option value="high">High · more thinking time</option></select></label><p class="settings-note">Your key is stored locally with restricted file permissions. Chat sends task context, including imported assignment descriptions, to OpenRouter.</p>{#if settingsError}<div class="settings-error" role="alert">{settingsError}</div>{/if}<button class="primary-button save-settings" disabled={settingsBusy || browserPreview}>{settingsBusy ? 'Saving…' : 'Save assistant settings'}<span>→</span></button></form>
+    {:else if settingsTab === 'alerts'}
+      <AlertSettings {alerts} tasks={demo ? [] : data?.tasks || []} preview={browserPreview} onchange={view => alerts = view} />
     {:else}
       <form onsubmit={event => { event.preventDefault(); saveCanvas(); }}>
-        <p class="canvas-connect-intro">Bring assignments and their requirements from your active student courses into All tasks. Every imported assignment gets the <strong>canvas</strong> label.</p>
+        <p class="canvas-connect-intro">Connect your student courses to browse materials, submit coursework, view feedback, and participate in discussions and messages. Imported tasks keep the <strong>canvas</strong> label.</p>
         <label>Canvas address<input type="url" bind:value={canvasFormUrl} placeholder="https://pcci.instructure.com" required /></label>
         <label>Personal access token<input type="password" bind:value={canvasFormToken} autocomplete="off" placeholder={canvas.configured ? 'Connected · leave blank to keep your token' : 'Paste your Canvas token'} /></label>
-        <p class="settings-note">Create a token in Canvas → Account → Settings → New Access Token. The token stays in the Rust backend after saving and is never sent to OpenRouter. Canvas sync only reads your courses and assignments.</p>
+        <p class="settings-note">Create a token in Canvas → Account → Settings → New Access Token. The token stays in the Rust backend after saving and is never sent to OpenRouter. Background sync reads assignments. The Canvas workspace also supports explicit submissions, comments, messages, and module progress updates.</p>
         <label class="canvas-auto"><input type="checkbox" bind:checked={canvasFormAuto} /><span>Sync on launch and every 15 minutes</span></label>
         {#if canvas.report}<div class="canvas-sync-report"><strong>{canvas.report.assignments} assignments · {canvas.report.courses} courses</strong><small>Last synced {new Date(canvas.report.syncedAt).toLocaleString()}</small><small>{canvas.report.created} added · {canvas.report.updated} updated · {canvas.report.unchanged} unchanged</small><button type="button" class="canvas-view-button" disabled={busy} onclick={() => { settingsOpen = false; showCanvas(); }}>View assignments →</button></div>{/if}
         {#if canvasSettingsError || canvas.error}<div class="settings-error" role="alert">{canvasSettingsError || canvas.error}</div>{/if}
-        <p class="settings-note">Sync keeps task references, local edits, timers, and Trash. Newly submitted Canvas work becomes complete locally. Checking off a task here never submits or changes anything in Canvas.</p>
+        <p class="settings-note">Sync keeps task references, local edits, timers, and Trash. Newly submitted Canvas work becomes complete locally. Checking off a task never submits coursework. Use the Canvas workspace’s submission form to send your work.</p>
         <button class="primary-button save-settings" disabled={canvasSaving || canvasBusy || browserPreview}>{canvasBusy ? 'Syncing Canvas…' : canvasSaving ? 'Saving…' : 'Save & sync assignments'}<span>↻</span></button>
       </form>
     {/if}

@@ -309,3 +309,52 @@ fn sqlite_reopens_without_losing_task_or_chat_history() {
     }
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn manual_tasks_need_only_a_title_and_skip_the_assistant() {
+    let mut s = store();
+    let ids = s
+        .create_task(TaskDraft { title: "  Buy printer ink ".into(), priority: 40, ..Default::default() })
+        .unwrap();
+    let task = s.tasks().unwrap().into_iter().find(|t| t.id == ids[0]).unwrap();
+    assert_eq!(task.title, "Buy printer ink");
+    assert_eq!(task.kind, "chore");
+    assert_eq!(task.labels, vec!["inbox"]);
+    assert_eq!(task.priority, 40);
+    assert!(task.description.is_empty());
+    assert!(s.messages().unwrap().is_empty(), "manual creation must not write chat history");
+
+    let ids = s
+        .create_task(TaskDraft {
+            title: "Lab report".into(),
+            description: "Write up results".into(),
+            task_type: "assignment".into(),
+            labels: vec!["#School".into(), "writing".into()],
+            priority: 80,
+            due_date: Some("2026-12-01".into()),
+            estimate_minutes: Some(90),
+        })
+        .unwrap();
+    let task = s.tasks().unwrap().into_iter().find(|t| t.id == ids[0]).unwrap();
+    assert_eq!(task.labels, vec!["school", "writing"]);
+    assert_eq!(task.due_date.as_deref(), Some("2026-12-01"));
+    assert_eq!(task.estimate.as_ref().map(|e| e.minutes), Some(90));
+
+    for bad in [
+        TaskDraft { title: " ".into(), ..Default::default() },
+        TaskDraft { title: "x".into(), task_type: "spaceship".into(), ..Default::default() },
+        TaskDraft { title: "x".into(), due_date: Some("12/01/2026".into()), ..Default::default() },
+        TaskDraft { title: "x".into(), estimate_minutes: Some(1), ..Default::default() },
+    ] {
+        assert!(s.create_task(bad).is_err());
+    }
+    assert_eq!(s.tasks().unwrap().len(), 2, "rejected drafts save nothing");
+}
+
+#[test]
+fn assistant_created_tasks_still_require_a_description() {
+    let mut s = store();
+    let mut action = create("Vague");
+    action.description = Some(" ".into());
+    assert!(s.apply(plan(vec![action]), "vague", Some(&classification()), true).is_err());
+}

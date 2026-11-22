@@ -1,4 +1,5 @@
 use crate::{database, snapshot, AppState, Request};
+use jev_tasks_core::canvas_workspace::{WorkspaceAction, WorkspaceQuery};
 use jev_tasks_core::{
     canvas::{normalize_base, CanvasClient, CanvasConfig, CanvasReport},
     Plan, Snapshot,
@@ -121,6 +122,73 @@ pub async fn sync_canvas(app: AppHandle) -> Result<CanvasReport, String> {
     tauri::async_runtime::spawn_blocking(move || sync(&app))
         .await
         .map_err(|_| "Canvas sync was interrupted.".to_string())?
+}
+#[tauri::command]
+pub async fn canvas_workspace_query(
+    app: AppHandle,
+    query: WorkspaceQuery,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        CanvasClient {
+            config: CanvasConfig::load(&state.data_dir),
+        }
+        .workspace(&query)
+    })
+    .await
+    .map_err(|_| "Canvas request was interrupted.".to_string())?
+}
+#[tauri::command]
+pub async fn canvas_workspace_action(
+    app: AppHandle,
+    action: WorkspaceAction,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let guard = state.canvas_gate.try_lock().map_err(|_| {
+            "Another Canvas operation is running. Wait for it to finish.".to_string()
+        })?;
+        let submitted = matches!(&action, WorkspaceAction::Submit { .. });
+        let result = CanvasClient {
+            config: CanvasConfig::load(&state.data_dir),
+        }
+        .workspace_action(action)?;
+        drop(guard);
+        // A failed local refresh must not turn a successful remote submission into a retryable failure.
+        let warning = if submitted { sync(&app).err() } else { None };
+        Ok(serde_json::json!({"result":result,"syncWarning":warning}))
+    })
+    .await
+    .map_err(|_| {
+        "Canvas operation was interrupted. Refresh its status before retrying.".to_string()
+    })?
+}
+#[tauri::command]
+pub fn open_canvas_link(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let config = CanvasConfig::load(&state.data_dir);
+    let base = config.validate()?;
+    let target = base.join(&path).map_err(|_| "Invalid Canvas link.")?;
+    // This only opens a browser after a user click. It never makes an authenticated API request.
+    if !["https", "http"].contains(&target.scheme())
+        || target.host_str().is_none()
+        || !target.username().is_empty()
+        || target.password().is_some()
+    {
+        return Err(
+            "Only HTTP or HTTPS resource links without login credentials can be opened.".into(),
+        );
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let value = objc2_foundation::NSString::from_str(target.as_str());
+        let url = objc2_foundation::NSURL::URLWithString(&value).ok_or("Invalid Canvas link.")?;
+        if !objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&url) {
+            return Err("Could not open Canvas in your browser.".into());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    return Err("Opening Canvas links currently requires macOS.".into());
+    Ok(())
 }
 pub async fn sync_chat(
     app: AppHandle,
