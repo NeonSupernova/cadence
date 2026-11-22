@@ -1,6 +1,6 @@
 [package]
 name = "jev-tasks"
-version = "0.1.0"
+version = "0.4.1"
 description = "A natural language task manager"
 authors = ["you"]
 edition = "2021"
@@ -26,7 +26,7 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace", "NSAccessibility", "NSPasteboard"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace", "NSAccessibility", "NSPasteboard", "NSWindow", "NSResponder"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSNotification", "NSOperation", "NSString", "block2"] }
 block2 = "0.6"

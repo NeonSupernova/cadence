@@ -1,5 +1,5 @@
 use jev_tasks_core::ai::PlanningContext;
-use jev_tasks_core::{Action, Config, Plan, Router, Snapshot, Store, View};
+use jev_tasks_core::{Action, Classification, Config, Plan, Router, Snapshot, Store, View};
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
@@ -7,6 +7,8 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 mod canvas_integration;
+mod sync_integration;
+mod mindful_integration;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(desktop)]
@@ -136,7 +138,10 @@ fn snapshot(
     focus_ids: Vec<i64>,
 ) -> Result<Snapshot, String> {
     let config = Config::load(data_dir);
-    database(data_dir, request.demo)?.snapshot(
+    let mut store = database(data_dir, request.demo)?;
+    // Forgotten timers stop at the cutoff even if nothing else touched them.
+    store.enforce_timer_cap()?;
+    store.snapshot(
         request.view,
         focus_ids,
         !config.api_key.is_empty(),
@@ -291,22 +296,30 @@ async fn process_chat(
         drop(store);
         drop(_guard);
         let router = Router { config: Config::load(&data_dir) };
-        let _ = app.emit("chat-progress", "Organizing your request…");
-        let (classification, intent) = router.classify(message, &tasks)?;
-        let _ = app.emit("chat-progress", "Working out the details…");
-        let mut plan = router.plan(PlanningContext { input: message, tasks: &tasks, messages: &history, view: &request.view, selected: request.selected_id, classification: &classification, intent: &intent, workload: &workload })?;
+        let _ = app.emit("chat-progress", "Thinking it through…");
+        let mut plan = router.plan(PlanningContext { input: message, tasks: &tasks, messages: &history, view: &request.view, selected: request.selected_id, workload: &workload })?;
         if capture_only && (plan.actions.len() != 1 || plan.actions[0].kind != "create" || plan.capacity.is_some() || plan.checkin.is_some() || plan.feedback.is_some()) {
             return Err("Quick Capture only adds a new task. Open the main window to change existing tasks.".into());
         }
-        if plan.actions.iter().filter(|a| a.kind == "create").count() > 1 {
-            for action in plan.actions.iter_mut().filter(|a| a.kind == "create") {
-                let text = format!("{}\n{}", action.title.as_deref().unwrap_or(""), action.description.as_deref().unwrap_or(""));
-                let (c, _) = router.classify(&text, &tasks)?;
-                if action.task_type.is_none(){action.task_type = Some(c.kind);}
-                if action.labels.is_none(){action.labels = Some(c.labels);}
-                if action.priority.is_none(){action.priority = Some(c.priority);}
-                if action.estimate.is_none(){action.estimate=c.estimate;}
-            }
+        // Jev classifies only new tasks, and a Jev outage never blocks the chat.
+        let mut classification: Option<Classification> = None;
+        if plan.actions.iter().any(|a| a.kind == "create") {
+            let _ = app.emit("chat-progress", "Sorting the new tasks…");
+        }
+        for action in plan.actions.iter_mut().filter(|a| a.kind == "create") {
+            let text = format!("{}\n{}", action.title.as_deref().unwrap_or(""), action.description.as_deref().unwrap_or(""));
+            let c = router.classify(&text, &tasks).map(|(c, _)| c).unwrap_or_else(|_| Classification {
+                kind: action.task_type.clone().unwrap_or_else(|| "chore".into()),
+                labels: action.labels.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| vec!["inbox".into()]),
+                priority: action.priority.unwrap_or(50),
+                confidence: 0.0,
+                estimate: None,
+            });
+            if action.task_type.is_none() { action.task_type = Some(c.kind.clone()); }
+            if action.labels.as_ref().is_none_or(|l| l.is_empty()) { action.labels = Some(c.labels.clone()); }
+            if action.priority.is_none() { action.priority = Some(c.priority); }
+            if action.estimate.is_none() { action.estimate = c.estimate.clone(); }
+            classification.get_or_insert(c);
         }
         let show_list = plan.view.is_some();
         let view = plan.view.clone().unwrap_or_else(|| request.view.clone());
@@ -315,7 +328,7 @@ async fn process_chat(
         let mut store = database(&data_dir, request.demo)?;
         let current = store.tasks()?;
         jev_tasks_core::store::validate_chat_version(&task_version, &current, &plan)?;
-        let focus = store.apply(plan, message, Some(&classification), true)?;
+        let focus = store.apply(plan, message, classification.as_ref(), true)?;
         let _ = app.emit("tasks-changed", serde_json::json!({ "demo": request.demo }));
         let mut result = snapshot(&data_dir, Request { view, ..request }, focus)?;
         result.show_list = show_list;
@@ -356,9 +369,10 @@ pub fn run() {
                 notifications::start(app.handle());
             }
             canvas_integration::start_background(app.handle());
+            sync_integration::start_background(app.handle());
+            mindful_integration::start_background(app.handle());
             #[cfg(desktop)]
             {
-                app.manage(updater::UpdaterState::default());
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
                 updater::start_background(app.handle());
@@ -414,19 +428,38 @@ pub fn run() {
             workload_integration::save_day_checkin,
             workload_integration::rate_task_effort,
             workload_integration::review_capacity_day,
-            workload_integration::assess_task_effort
-            ,telemetry::get_telemetry_settings
-            ,telemetry::save_telemetry_settings
-            ,telemetry::capture_usage_event
-            ,telemetry::submit_feedback
-            ,updater::get_update_status
-            ,updater::check_for_updates
-            ,notifications::get_alerts
-            ,notifications::save_alert_settings
-            ,notifications::pause_alerts
-            ,notifications::save_reminder
-            ,notifications::delete_reminder
-            ,notifications::test_notification
+            workload_integration::assess_task_effort,
+            workload_integration::save_timer_settings,
+            workload_integration::break_down_task,
+            sync_integration::get_sync_settings,
+            sync_integration::save_sync_settings,
+            sync_integration::sync_now,
+            mindful_integration::mindful_current,
+            mindful_integration::mindful_respond,
+            mindful_integration::mindful_quiet,
+            mindful_integration::get_mindful_settings,
+            mindful_integration::save_mindful_settings,
+            mindful_integration::mindful_preview,
+            telemetry::get_telemetry_settings,
+            telemetry::save_telemetry_settings,
+            telemetry::capture_usage_event,
+            telemetry::submit_feedback,
+            #[cfg(desktop)]
+            updater::check_for_update,
+            #[cfg(desktop)]
+            updater::install_available_update,
+            #[cfg(desktop)]
+            notifications::get_alerts,
+            #[cfg(desktop)]
+            notifications::save_alert_settings,
+            #[cfg(desktop)]
+            notifications::pause_alerts,
+            #[cfg(desktop)]
+            notifications::save_reminder,
+            #[cfg(desktop)]
+            notifications::delete_reminder,
+            #[cfg(desktop)]
+            notifications::test_notification
         ])
         .build(tauri::generate_context!())
         .expect("Could not start Cadence")
@@ -435,6 +468,10 @@ pub fn run() {
                 app.state::<AppState>()
                     .canvas_stop
                     .store(true, std::sync::atomic::Ordering::Relaxed);
+                app.state::<sync_integration::SyncState>()
+                    .stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                mindful_integration::stop(app);
             }
             #[cfg(desktop)]
             if matches!(&event, tauri::RunEvent::Exit) {

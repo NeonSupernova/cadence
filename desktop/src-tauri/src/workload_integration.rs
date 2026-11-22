@@ -1,7 +1,7 @@
 use crate::{database, snapshot, AppState, Request};
 use jev_tasks_core::{
     workload::{CapacityProfile, Checkin, Estimate},
-    Config, Router, Snapshot,
+    Action, Config, Plan, Router, Snapshot, TimerSettings,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -125,6 +125,63 @@ pub async fn assess_task_effort(
     })
     .await
     .map_err(|_| "Workload assessment was interrupted.".to_string())?
+}
+
+#[tauri::command]
+pub fn save_timer_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: Request,
+    settings: TimerSettings,
+) -> Result<Snapshot, String> {
+    let _guard = state
+        .gate
+        .try_lock()
+        .map_err(|_| "Wait for the current operation to finish.")?;
+    // Timer behavior is a personal preference, so it applies to both workspaces.
+    for demo in [false, true] {
+        if demo && !state.data_dir.join("demo.sqlite").exists() {
+            continue;
+        }
+        database(&state.data_dir, demo)?.save_timer_settings(&settings)?;
+    }
+    let _ = tauri::Emitter::emit(&app, "tasks-changed", serde_json::json!({}));
+    snapshot(&state.data_dir, request, vec![])
+}
+
+/// Asks the writing model for small steps and appends them to the task's checklist.
+#[tauri::command]
+pub async fn break_down_task(app: AppHandle, request: Request, id: i64) -> Result<Snapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let task = database(&state.data_dir, request.demo)?
+            .tasks()?
+            .into_iter()
+            .find(|t| t.id == id && !t.deleted)
+            .ok_or("Task does not exist.")?;
+        let router = Router {
+            config: Config::load(&state.data_dir),
+        };
+        let steps = router.breakdown(&task)?;
+        let _guard = state
+            .gate
+            .lock()
+            .map_err(|_| "Could not save the steps.")?;
+        let mut action = Action::status("add_subtasks", id);
+        action.subtasks = Some(steps);
+        database(&state.data_dir, request.demo)?.apply(
+            Plan {
+                actions: vec![action],
+                ..Default::default()
+            },
+            "",
+            None,
+            false,
+        )?;
+        snapshot(&state.data_dir, request, vec![id])
+    })
+    .await
+    .map_err(|_| "Breaking down the task was interrupted.".to_string())?
 }
 
 #[tauri::command]

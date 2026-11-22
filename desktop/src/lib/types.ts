@@ -5,7 +5,8 @@ export type Task = {
   priority: number; status: 'open' | 'in_progress' | 'done'; confidence: number;
   createdAt: string; updatedAt: string; dueDate: string | null; deleted: boolean;
   trackedMs: number; timerStartedAt: string | null;
-  timeEntries: { startedAt: string; endedAt: string; durationMs: number; manual?: boolean }[];
+  timeEntries: { startedAt: string; endedAt: string; durationMs: number; manual?: boolean; autoStopped?: boolean }[];
+  subtasks?: Subtask[];
   estimate?: Estimate | null;
   canvas?: { baseUrl: string; courseId: number; assignmentId: number; courseName: string; courseCode: string; title: string; url: string; dueAt: string | null; submitted: boolean; syncedAt: string } | null;
 };
@@ -14,7 +15,7 @@ export type Stats = {
   total: number; active: number; completed: number; highPriority: number; dueToday: number;
   overdue: number; completionRate: number; completedThisWeek: number;
   labels: Record<string, number>; types: Record<string, number>;
-  trackedMs: number; trackedTodayMs: number; runningTaskId: number | null;
+  trackedMs: number; trackedTodayMs: number; runningTaskId: number | null; runningTaskIds?: number[];
 };
 export type Message = { id: number; role: string; content: string; taskIds: number[]; createdAt: string };
 export type Snapshot = {
@@ -23,6 +24,7 @@ export type Snapshot = {
   nextTaskId: number | null;
   showList: boolean;
   workload: Workload;
+  timer?: TimerSettings;
 };
 export type Settings = { configured: boolean; model: string; jevModel: string; reasoningEffort: string; labelThreshold: number };
 export type CanvasReport = { courses: number; assignments: number; created: number; updated: number; unchanged: number; warnings: string[]; syncedAt: string };
@@ -34,6 +36,17 @@ export type Assessment = { estimate: Estimate; predictedMinutes: number; remaini
 export type PlanBlock = { taskId: number; minutes: number; units: number; partial: boolean };
 export type CapacityDay = { date: string; weekday: number; minutes: number; energy: number; capacityUnits: number; spentMinutes: number; spentUnits: number; remainingMinutes: number; remainingUnits: number; blocks: PlanBlock[]; learnedFactor: number };
 export type Workload = { profile: { weekdayMinutes: number[]; learningEnabled: boolean }; calibration: { timeSamples: number; effortSamples: number; daySamples: number; timeCoefficients: number[]; loadWeights: number[]; weekdayFactors: number[]; uncertainty: number; stage: string }; assessments: Record<number, Assessment>; days: CapacityDay[]; riskIds: number[]; nextTaskId: number | null };
+export type Subtask = { title: string; done: boolean; doneAt: string | null };
+export type TimerSettings = { multiple: boolean; capMinutes: number };
+export const defaultTimer = (): TimerSettings => ({ multiple: true, capMinutes: 240 });
+export type SyncStatus = { enabled: boolean; folder: string | null; deviceName: string; providers: { name: string; path: string }[]; lastSyncedAt: string | null; devices: { name: string; exportedAt: string; tasks: number }[]; report: { created: number; updated: number; skipped: number } | null; warnings: string[]; error: string | null };
+export type UpdateCheck = { currentVersion: string; available: string | null; notes: string | null; date: string | null; canInstall: boolean };
+export type Reminder = 'water' | 'eyes' | 'stretch';
+export type ReminderResponse = 'done' | 'snooze' | 'skip' | 'timeout';
+export interface MindfulSettings { enabled: boolean; waterMinutes: number; eyesMinutes: number; stretchMinutes: number; displaySeconds: number }
+export interface MindfulStatus { settings: MindfulSettings; quietUntil: string | null }
+export interface ShowingReminder { kind: Reminder; seconds: number; variant: number; preview: boolean }
+export const defaultMindful: MindfulSettings = { enabled: true, waterMinutes: 45, eyesMinutes: 20, stretchMinutes: 60, displaySeconds: 25 };
 export type BadgeMode = 'off' | 'overdue' | 'due_today';
 export type TrayTitle = 'none' | 'timer' | 'due' | 'both';
 export type Repeat = 'none' | 'hourly' | 'daily' | 'weekdays' | 'weekly';
@@ -42,9 +55,9 @@ export type AlertSettings = {
   reminders: boolean; sound: boolean; quietHours: boolean; quietStart: string; quietEnd: string; pausedUntil: string | null;
   badge: BadgeMode; trayTitle: TrayTitle; dockProgress: boolean; keepRunning: boolean;
 };
-export type Reminder = { id: string; taskId: number | null; title: string; note: string; at: string; repeat: Repeat; enabled: boolean; lastFiredAt: string | null };
+export type TaskReminder = { id: string; taskId: number | null; title: string; note: string; at: string; repeat: Repeat; enabled: boolean; lastFiredAt: string | null };
 export type ReminderInput = { id?: string | null; taskId: number | null; title: string; note: string; at: string; repeat: Repeat; enabled: boolean };
-export type AlertsView = { settings: AlertSettings; reminders: Reminder[]; platform: 'macos' | 'windows' | 'linux' };
+export type AlertsView = { settings: AlertSettings; reminders: TaskReminder[]; platform: 'macos' | 'windows' | 'linux' };
 export const defaultAlerts = (): AlertsView => ({
   platform: 'macos', reminders: [],
   settings: { enabled: true, dueAlerts: true, leadMinutes: [1440, 60, 0], allDayTime: '09:00', overdueDaily: true, minPriority: 0, reminders: true, sound: true, quietHours: false, quietStart: '22:00', quietEnd: '08:00', pausedUntil: null, badge: 'due_today', trayTitle: 'timer', dockProgress: true, keepRunning: true },

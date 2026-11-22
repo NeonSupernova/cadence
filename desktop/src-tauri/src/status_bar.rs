@@ -68,12 +68,20 @@ pub(crate) fn change(app: &AppHandle, kind: &str, id: i64, demo: bool) -> Result
 
 fn running_change(app: &AppHandle, kind: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let task = database(&state.data_dir, false)?
+    let mut running: Vec<_> = database(&state.data_dir, false)?
         .tasks()?
         .into_iter()
-        .find(|t| !t.deleted && t.timer_started_at.is_some());
-    if let Some(task) = task {
-        change(app, kind, task.id, false)?;
+        .filter(|t| !t.deleted && t.timer_started_at.is_some())
+        .collect();
+    // Pause stops every running timer; Complete finishes the most recently started task.
+    running.sort_by(|a, b| b.timer_started_at.cmp(&a.timer_started_at));
+    let targets: Vec<_> = if kind == "pause" {
+        running.iter().map(|t| t.id).collect()
+    } else {
+        running.first().map(|t| t.id).into_iter().collect()
+    };
+    for id in targets {
+        change(app, kind, id, false)?;
     }
     Ok(())
 }
@@ -121,7 +129,8 @@ fn clock(seconds: u64) -> String {
 
 /// Everything the status item shows, derived from tasks, reminders, and alert settings.
 struct View {
-    running: Option<(Task, u64)>,
+    /// Running timers, newest first, with elapsed seconds.
+    running: Vec<(Task, u64)>,
     due: Vec<Task>,
     badge: i64,
     next_reminder: Option<String>,
@@ -133,10 +142,12 @@ fn view(tasks: &[Task], data_dir: &std::path::Path) -> View {
     let now = chrono::Local::now();
     let settings = alerts::load_settings(data_dir);
     let reminders = if settings.reminders { alerts::load_reminders(data_dir) } else { vec![] };
-    let running = tasks
+    let mut running: Vec<(Task, u64)> = tasks
         .iter()
-        .find(|t| !t.deleted && t.timer_started_at.is_some())
-        .map(|t| (t.clone(), t.elapsed_ms_at(chrono::Utc::now()) / 1000));
+        .filter(|t| !t.deleted && t.timer_started_at.is_some())
+        .map(|t| (t.clone(), t.elapsed_ms_at(chrono::Utc::now()) / 1000))
+        .collect();
+    running.sort_by(|a, b| b.0.timer_started_at.cmp(&a.0.timer_started_at));
     let due: Vec<Task> = alerts::due_now(tasks, now.date_naive()).into_iter().cloned().collect();
     let next_reminder = alerts::next_reminder(&reminders).and_then(|r| {
         let at = r.at_utc()?.with_timezone(&chrono::Local);
@@ -165,7 +176,7 @@ const MENU_TASKS: usize = 6;
 fn menu_signature(v: &View) -> String {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut parts = vec![
-        v.running.as_ref().map(|(t, _)| format!("run:{}:{}", t.id, t.title)).unwrap_or_default(),
+        v.running.iter().map(|(t, _)| format!("run:{}:{}", t.id, t.title)).collect::<Vec<_>>().join(","),
         format!("due:{}", v.due.len()),
         v.next_reminder.clone().unwrap_or_default(),
         v.paused_until.clone().unwrap_or_default(),
@@ -182,12 +193,14 @@ fn build_menu(app: &AppHandle, v: &View) -> tauri::Result<Menu<Wry>> {
     let action = |id: &str, text: &str, enabled: bool| MenuItem::with_id(app, id, text, enabled, None::<&str>);
     let sep = || PredefinedMenuItem::separator(app);
 
-    menu.append(&label(match &v.running {
-        Some((t, _)) => format!("◉ TASK-{:03} · {}", t.id, clip(&t.title, 40)),
-        None => "No task in focus".into(),
+    menu.append(&label(match v.running.as_slice() {
+        [] => "No task in focus".into(),
+        [(t, _)] => format!("◉ TASK-{:03} · {}", t.id, clip(&t.title, 40)),
+        [(newest, _), ..] => format!("◉ {} timers · newest TASK-{:03}", v.running.len(), newest.id),
     })?)?;
-    menu.append(&action("pause-running", "Pause Focus", v.running.is_some())?)?;
-    menu.append(&action("complete-running", "Complete Focused Task", v.running.is_some())?)?;
+    let pause = if v.running.len() > 1 { "Pause All Timers" } else { "Pause Focus" };
+    menu.append(&action("pause-running", pause, !v.running.is_empty())?)?;
+    menu.append(&action("complete-running", "Complete Focused Task", !v.running.is_empty())?)?;
     menu.append(&sep()?)?;
 
     if v.due.is_empty() {
@@ -224,7 +237,11 @@ fn build_menu(app: &AppHandle, v: &View) -> tauri::Result<Menu<Wry>> {
 }
 
 fn title(v: &View) -> Option<String> {
-    let timer = v.running.as_ref().map(|(_, s)| clock(*s));
+    let timer = match v.running.as_slice() {
+        [] => None,
+        [(_, s)] => Some(clock(*s)),
+        [(_, newest), ..] => Some(format!("{} · {}", v.running.len(), clock(*newest))),
+    };
     let due = (!v.due.is_empty()).then(|| format!("{} due", v.due.len()));
     match v.settings.tray_title {
         alerts::TrayTitle::None => None,
@@ -239,9 +256,11 @@ fn title(v: &View) -> Option<String> {
 
 fn tooltip(v: &View) -> String {
     let mut parts = vec!["Cadence".to_string()];
-    match &v.running {
-        Some((t, s)) => parts.push(format!("{} · {}", clip(&t.title, 40), clock(*s))),
-        None => parts.push("no timer running".into()),
+    if v.running.is_empty() {
+        parts.push("no timer running".into());
+    }
+    for (t, s) in &v.running {
+        parts.push(format!("{} · {}", clip(&t.title, 40), clock(*s)));
     }
     if !v.due.is_empty() {
         parts.push(format!("{} due", v.due.len()));
@@ -257,7 +276,7 @@ fn progress(v: &View) -> Option<(u64, bool)> {
     if !v.settings.dock_progress {
         return None;
     }
-    let (task, seconds) = v.running.as_ref()?;
+    let (task, seconds) = v.running.first()?;
     let minutes = task.estimate.as_ref()?.minutes.max(1) as u64;
     let percent = seconds * 100 / (minutes * 60);
     Some((percent.min(100), percent >= 100))
@@ -408,8 +427,21 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.state::<AppState>().data_dir.clone();
     std::thread::spawn(move || {
         // A native loop keeps the status item current while every webview is hidden.
-        let Ok(store) = database(&path, false) else { return };
+        let Ok(mut store) = database(&path, false) else { return };
+        let mut ticks: u32 = 0;
         while !stop.load(Ordering::Relaxed) {
+            if ticks.is_multiple_of(30) {
+                // Stop forgotten timers at the cutoff, even while every window is hidden.
+                if let Ok(stopped) = store.enforce_timer_cap() {
+                    if !stopped.is_empty() {
+                        let _ = handle.emit(
+                            "tasks-changed",
+                            serde_json::json!({ "demo": false, "reason": "cutoff", "ids": stopped }),
+                        );
+                    }
+                }
+            }
+            ticks = ticks.wrapping_add(1);
             if let Ok(tasks) = store.tasks() {
                 let v = view(&tasks, &path);
                 let main = handle.clone();

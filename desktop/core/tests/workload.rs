@@ -224,6 +224,7 @@ fn unreliable_long_timers_can_train_effort_without_polluting_time_predictions() 
         ended_at: now().to_rfc3339(),
         duration_ms: 8 * 60 * 60 * 1000,
         manual: false,
+        auto_stopped: false,
     }];
     let o = feedback_outcome(
         &t,

@@ -4,6 +4,8 @@ pub mod canvas;
 pub mod canvas_workspace;
 pub mod model;
 pub mod store;
+pub mod sync;
+pub mod mindful;
 pub mod workload;
 
 pub use ai::{Config, Router};

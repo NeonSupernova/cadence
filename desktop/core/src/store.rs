@@ -4,9 +4,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
 pub struct Store {
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
-fn err(e: impl std::fmt::Display) -> String {
+pub(crate) fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 impl Store {
@@ -109,6 +109,107 @@ impl Store {
             &self.workload_rows("workload_checkins", "date")?,
             Utc::now(),
         ))
+    }
+    pub fn timer_settings(&self) -> Result<TimerSettings, String> {
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT payload FROM integration_state WHERE key = 'timer'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        Ok(value
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default())
+    }
+    pub fn save_timer_settings(&mut self, settings: &TimerSettings) -> Result<(), String> {
+        settings.validate()?;
+        self.connection.execute("INSERT INTO integration_state(key,payload) VALUES ('timer',?) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload",[serde_json::to_string(settings).map_err(err)?]).map_err(err)?;
+        if !settings.multiple {
+            // Keep only the most recently started timer when switching to one-at-a-time.
+            let tasks = self.tasks()?;
+            let keep = tasks
+                .iter()
+                .filter(|t| !t.deleted && t.timer_started_at.is_some())
+                .max_by(|a, b| a.timer_started_at.cmp(&b.timer_started_at))
+                .map(|t| t.id);
+            let actions: Vec<_> = tasks
+                .iter()
+                .filter(|t| t.timer_started_at.is_some() && Some(t.id) != keep)
+                .map(|t| Action::status("pause", t.id))
+                .collect();
+            if !actions.is_empty() {
+                self.apply(
+                    Plan {
+                        actions,
+                        ..Default::default()
+                    },
+                    "",
+                    None,
+                    false,
+                )?;
+            }
+        }
+        self.enforce_timer_cap()?;
+        Ok(())
+    }
+    /// Stops every timer that ran past the configured cutoff, ending each session at the cutoff.
+    /// Returns the IDs of tasks that were stopped.
+    pub fn enforce_timer_cap(&mut self) -> Result<Vec<i64>, String> {
+        let cap = self.timer_settings()?.cap_ms();
+        if cap.is_none() {
+            return Ok(vec![]);
+        }
+        let now = Utc::now();
+        if !self
+            .tasks()?
+            .iter()
+            .any(|t| t.timer_over_cap(now, cap))
+        {
+            return Ok(vec![]);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let rows: Vec<(i64, String)> = {
+            let mut statement = tx
+                .prepare("SELECT id, payload FROM tasks")
+                .map_err(err)?;
+            let rows = statement
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(err)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(err)?
+        };
+        let mut stopped = vec![];
+        for (id, payload) in rows {
+            let mut task: Task = serde_json::from_str(&payload).map_err(err)?;
+            if task.timer_over_cap(now, cap) {
+                task.stop_timer_capped(now, cap);
+                task.updated_at = now.to_rfc3339();
+                tx.execute(
+                    "UPDATE tasks SET payload = ? WHERE id = ?",
+                    params![serde_json::to_string(&task).map_err(err)?, id],
+                )
+                .map_err(err)?;
+                stopped.push(id);
+            }
+        }
+        tx.commit().map_err(err)?;
+        Ok(stopped)
+    }
+    /// Overwrites a stored task as-is, bypassing validation. Intended for tests and repairs.
+    #[doc(hidden)]
+    pub fn replace_task_payload(&self, id: i64, task: &Task) -> Result<(), String> {
+        self.connection
+            .execute(
+                "UPDATE tasks SET payload = ? WHERE id = ?",
+                params![serde_json::to_string(task).map_err(err)?, id],
+            )
+            .map_err(err)?;
+        Ok(())
     }
     pub fn save_capacity(&self, profile: crate::workload::CapacityProfile) -> Result<(), String> {
         profile.validate()?;
@@ -329,6 +430,8 @@ impl Store {
                     estimate: None,
                     baseline_estimate: None,
                     organization: Default::default(),
+                    subtasks: vec![],
+                    uid: Some(crate::sync::canvas_uid(&source)),
                 }
             };
             task.canvas = Some(source);
@@ -381,6 +484,7 @@ impl Store {
             });
         }
         Ok(Snapshot {
+            timer: self.timer_settings()?,
             next_task_id: workload.next_task_id,
             workload,
             show_list: false,
@@ -466,6 +570,8 @@ impl Store {
         if let Some(p) = &plan.capacity {
             p.validate()?;
         }
+        let timer = self.timer_settings()?;
+        let cap = timer.cap_ms();
         let tx = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -484,6 +590,9 @@ impl Store {
                 "add_time",
                 "set_time",
                 "remove_time",
+                "add_subtasks",
+                "toggle_subtask",
+                "remove_subtask",
             ]
             .contains(&action.kind.as_str())
             {
@@ -529,6 +638,8 @@ impl Store {
                         estimate: c.estimate.clone(),
                         baseline_estimate: None,
                         organization: Default::default(),
+                        subtasks: vec![],
+                        uid: Some(new_uid()),
                     }
                 } else {
                     let payload: String = tx
@@ -546,25 +657,27 @@ impl Store {
                 let previous_tracked_ms = task.tracked_ms;
                 match action.kind.as_str() {
                     "complete" => {
-                        task.stop_timer_at(Utc::now());
+                        task.stop_timer_capped(Utc::now(), cap);
                         if task.status != Status::Done {
                             task.completed_at = Some(now.clone());
                         }
                         task.status = Status::Done;
                     }
                     "reopen" => {
-                        task.stop_timer_at(Utc::now());
+                        task.stop_timer_capped(Utc::now(), cap);
                         task.status = Status::Open;
                         task.completed_at = None;
                     }
-                    "pause" => task.stop_timer_at(Utc::now()),
+                    "pause" => task.stop_timer_capped(Utc::now(), cap),
                     "start" => {
                         if task.status == Status::Done {
                             return Err(format!("Reopen TASK-{id:03} before starting its timer."));
                         }
-                        // One running timer per workspace. Pause the previous task atomically.
+                        // In one-at-a-time mode, pause the previous task atomically.
                         let tick = Utc::now();
-                        let others: Vec<(i64, String)> = {
+                        let others: Vec<(i64, String)> = if timer.multiple {
+                            vec![]
+                        } else {
                             let mut statement = tx
                                 .prepare("SELECT id, payload FROM tasks WHERE id != ?")
                                 .map_err(err)?;
@@ -576,7 +689,7 @@ impl Store {
                         for (other_id, payload) in others {
                             let mut other: Task = serde_json::from_str(&payload).map_err(err)?;
                             if other.timer_started_at.is_some() {
-                                other.stop_timer_at(tick);
+                                other.stop_timer_capped(tick, cap);
                                 other.updated_at = tick.to_rfc3339();
                                 tx.execute(
                                     "UPDATE tasks SET payload = ? WHERE id = ?",
@@ -598,7 +711,7 @@ impl Store {
                         }
                     }
                     "delete" => {
-                        task.stop_timer_at(Utc::now());
+                        task.stop_timer_capped(Utc::now(), cap);
                         task.deleted = true;
                     }
                     "restore" => task.deleted = false,
@@ -633,6 +746,7 @@ impl Store {
                             ended_at: at,
                             duration_ms,
                             manual: true,
+                            auto_stopped: false,
                         });
                     }
                     "set_time" | "remove_time" => {
@@ -664,6 +778,40 @@ impl Store {
                                 .to_rfc3339();
                             }
                             entry.duration_ms = duration_ms;
+                        }
+                    }
+                    "add_subtasks" => {
+                        let titles = action
+                            .subtasks
+                            .as_ref()
+                            .filter(|t| !t.is_empty())
+                            .ok_or("Add at least one step.")?;
+                        for title in titles {
+                            let title = title.trim();
+                            if title.is_empty() || title.chars().count() > 200 {
+                                return Err("Each step must be 1–200 characters.".into());
+                            }
+                            task.subtasks.push(Subtask {
+                                title: title.into(),
+                                done: false,
+                                done_at: None,
+                            });
+                        }
+                        if task.subtasks.len() > MAX_SUBTASKS {
+                            return Err(format!("A task can hold at most {MAX_SUBTASKS} steps."));
+                        }
+                    }
+                    "toggle_subtask" | "remove_subtask" => {
+                        let index = action.entry_index.ok_or("Choose a step.")?;
+                        if index >= task.subtasks.len() {
+                            return Err("That step no longer exists.".into());
+                        }
+                        if action.kind == "remove_subtask" {
+                            task.subtasks.remove(index);
+                        } else {
+                            let step = &mut task.subtasks[index];
+                            step.done = !step.done;
+                            step.done_at = step.done.then(|| now.clone());
                         }
                     }
                     "create" | "update" => {
@@ -924,6 +1072,7 @@ impl Store {
                 minutes: None,
                 date: None,
                 entry_index: None,
+                subtasks: None,
             };
             self.apply(
                 Plan {
@@ -953,7 +1102,7 @@ impl Store {
         Ok(())
     }
 }
-fn validate_task(t: &Task) -> Result<(), String> {
+pub(crate) fn validate_task(t: &Task) -> Result<(), String> {
     if t.title.is_empty() || t.title.chars().count() > 140 {
         return Err("Task titles must be 1–140 characters.".into());
     }
